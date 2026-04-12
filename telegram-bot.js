@@ -513,6 +513,10 @@ async function runScan(notify = true) {
 }
 
 async function sendAlert(bets) {
+  // Nur Spiele mit positivem Edge im Alert
+  bets = bets.filter(b => b.edge > 0);
+  if (!bets.length) return;
+
   const total = bets.reduce((s, b) => s + b.bet, 0);
   let msg = `*ODDIFY x TIPICO*\n_${nowStr()}_\n${bets.length} neue Spiele | *\u20ac${total.toFixed(2)}*\n\n`;
 
@@ -535,19 +539,36 @@ async function sendAlert(bets) {
 function formatBets(bets, title) {
   if (!bets.length) return 'Keine Spiele gefunden.';
   const total = bets.reduce((s, b) => s + b.bet, 0);
-  let out = `*${title || 'Spiele'}*\n_${nowStr()}_\n${bets.length} Spiele | *\u20ac${total.toFixed(2)}*\n\n`;
+  const posCount = bets.filter(b => b.edge > 0).length;
+  const negCount = bets.length - posCount;
+  let out = `*${title || 'Spiele'}*\n_${nowStr()}_\n${bets.length} Spiele`;
+  if (negCount > 0) out += ` (${posCount} mit Edge, ${negCount} \u26a0\ufe0f)`;
+  out += ` | *\u20ac${total.toFixed(2)}*\n\n`;
 
-  let lastDate = '';
+  // Gruppiere nach Datum und zeige Datum + frueheste Spielzeit
+  const byDate = {};
+  const dateOrder = [];
   for (const b of bets) {
-    if (b.gameDate !== lastDate) {
-      out += `\`--- ${b.gameDate} ---\`\n`;
-      lastDate = b.gameDate;
+    if (!byDate[b.gameDate]) { byDate[b.gameDate] = []; dateOrder.push(b.gameDate); }
+    byDate[b.gameDate].push(b);
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  for (const date of dateOrder) {
+    const group = byDate[date];
+    const dayLabel = date === today ? 'Heute' : date === tomorrow ? 'Morgen' : date;
+    const dd = date.slice(8,10) + '.' + date.slice(5,7) + '.';
+    out += `\`--- ${dayLabel} ${dd} ---\`\n`;
+
+    for (const b of group) {
+      const e    = b.edge >= 0 ? `+${(b.edge*100).toFixed(1)}%` : `${(b.edge*100).toFixed(1)}%`;
+      const warn = b.edge < 0 ? '\u26a0\ufe0f ' : b.edge > 0.05 ? '\u2605 ' : '\u25cb ';
+      const real = b.hasRealOdds ? '' : '~';
+      out += `${warn}*${b.pick}* vs ${b.opponent}\n`;
+      out += `_${b.dateLabel}_ | ${b.league} | ${real}${b.odds.toFixed(2)} | ${e} | *\u20ac${b.bet.toFixed(2)}*\n\n`;
     }
-    const e    = b.edge >= 0 ? `+${(b.edge*100).toFixed(1)}%` : `${(b.edge*100).toFixed(1)}%`;
-    const star = b.edge > 0.05 ? '\u2605 ' : b.edge > 0 ? '\u25cb ' : '';
-    const real = b.hasRealOdds ? '' : '~';
-    out += `${star}*${b.pick}* vs ${b.opponent}\n`;
-    out += `_${b.dateLabel}_ | ${b.league} | ${real}${b.odds.toFixed(2)} | ${e} | *\u20ac${b.bet.toFixed(2)}*\n\n`;
   }
   return out.trim();
 }
