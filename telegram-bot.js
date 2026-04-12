@@ -647,6 +647,20 @@ bot.on('message', async msg => {
 
     if (!pool.length) return send('_Kein Spiel mit positivem Erwartungswert gefunden._', chatId);
 
+    // Auch das letzte verbleibende Spiel pruefen — selbst Edge < 0 = keine Wette
+    if (pool.every(b => b.edge < 0)) {
+      const b = pool[0];
+      const injWarn = (b.pickInjuries || 0) > 5
+        ? '\n\u{1FA79} Dazu ' + b.pickInjuries + ' Verletzungsausfaelle beim Pick.' : '';
+      return send(
+        '\u26a0\ufe0f *Kein brauchbares Spiel gefunden*\n\n' +
+        'Selbst das beste Spiel heute hat negativen Edge:\n' +
+        '*' + b.pick + '* vs ' + b.opponent + ' | Edge: ' + (b.edge*100).toFixed(1) + '% | Quote: ' + b.odds.toFixed(2) + injWarn + '\n\n' +
+        '_Der Buchmacher ist heute im Vorteil. Besser nicht wetten._',
+        chatId
+      );
+    }
+
     const removed = (sportArg === 'heute' || sportArg === 'live'
       ? lastBets.filter(b => b.gameDate === todayStr3)
       : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr3)).length - pool.length;
