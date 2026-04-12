@@ -1,9 +1,9 @@
 {
   "name": "oddify-tipico-telegram-bot",
   "version": "1.0.0",
-  "main": "telegram_bot.js",
+  "main": "telegram-bot.js",
   "scripts": {
-    "start": "node telegram_bot.js"
+    "start": "node telegram-bot.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
