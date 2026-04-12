@@ -1,0 +1,36 @@
+const axios = require('axios');
+
+const API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvdWRkaGhwdXlyeHVnZmh1cW1xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY5MjA3ODcsImV4cCI6MjA3MjQ5Njc4N30.WVnGOt-nuubcVQLDskLqZSrcezK4OkbUFOUOLXWbqv4';
+const AUTH   = 'eyJhbGciOiJIUzI1NiIsImtpZCI6IkdWdnNnT3JTWG15UlpXM3EiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2ZvdWRkaGhwdXlyeHVnZmh1cW1xLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJiN2IwNzEzNC1jNTAwLTRjNDQtOTM4MC1iNjI0N2Y4YTUyMWUiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc1OTYwMjgxLCJpYXQiOjE3NzU5NTY2ODEsImVtYWlsIjoicGF1bDIwMDRtbUBnbWFpbC5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImRpc3BsYXlfbmFtZSI6Iktpa2lsbGVyIiwiZW1haWwiOiJwYXVsMjAwNG1tQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJwaG9uZV92ZXJpZmllZCI6ZmFsc2UsInN1YiI6ImI3YjA3MTM0LWM1MDAtNGM0NC05MzgwLWI2MjQ3ZjhhNTIxZSJ9LCJyb2xlIjoiYXV0aGVudGljYXRlZCIsImFhbCI6ImFhbDEiLCJhbXIiOlt7Im1ldGhvZCI6InBhc3N3b3JkIiwidGltZXN0YW1wIjoxNzc1OTU2NjgxfV0sInNlc3Npb25faWQiOiIxYTViZjI2Mi04MDU2LTRlYjYtYThlZS04ODFhNjcwYmM4NDgiLCJpc19hbm9ueW1vdXMiOmZhbHNlfQ.4gnb0mq0LdhaOhs-OSSAA0qkdiSBd5Z10q6DgG5uzn4';
+
+const SPORTS_TO_TEST = [
+  'nba', 'nfl', 'nhl', 'mlb',
+  'soccer', 'football', 'bundesliga', 'premier_league', 'champions_league',
+  'tennis', 'tennis_atp', 'tennis_wta', 'atp', 'wta',
+  'ufc', 'mma', 'boxing',
+  'Soccer', 'Tennis', 'NFL', 'soccer_epl'
+];
+
+async function test(sport) {
+  try {
+    const res = await axios.post(
+      'https://fouddhhpuyrxugfhuqmq.supabase.co/functions/v1/get-predictions',
+      { sport },
+      { headers: { 'apikey': API_KEY, 'Authorization': `Bearer ${AUTH}`, 'Content-Type': 'application/json', 'Origin': 'https://oddify.ai' }, timeout: 8000 }
+    );
+    const data = res.data;
+    const count = Array.isArray(data) ? data.length : (data?.length || '?');
+    console.log(`  ${sport.padEnd(20)} -> ${count} Eintraege`);
+  } catch (e) {
+    console.log(`  ${sport.padEnd(20)} -> FEHLER ${e.response?.status || e.message}`);
+  }
+}
+
+(async () => {
+  console.log('Teste Oddify Sport-Schluessel...\n');
+  for (const s of SPORTS_TO_TEST) {
+    await test(s);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.log('\nFertig.');
+})();
