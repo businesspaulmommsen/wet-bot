@@ -147,8 +147,28 @@ function parseGame(g, sport) {
     const realOdds = homeWins ? g.home_odds_decimal : g.away_odds_decimal;
     const odds     = (realOdds && realOdds > 1) ? realOdds : estimateOdds(prob);
     if (prob < CONFIG.minProbability) return null;
+
+    // ── Profi-Adjustierungen ──────────────────────
+    const confidence = g.model_confidence || 0.7;
+
+    // 1. Shrinkage: niedrige Confidence zieht Wahrscheinlichkeit Richtung 50%
+    const adjProb = prob * confidence + 0.5 * (1 - confidence);
+
+    // 2. Injury-Factor: Ausfaelle beim Favoriten reduzieren dessen Chance
+    const pickInjuries = homeWins ? g.home_injuries_out || 0 : g.away_injuries_out || 0;
+    const oppInjuries  = homeWins ? g.away_injuries_out || 0 : g.home_injuries_out || 0;
+    const injuryFactor = Math.max(0.85, 1 - pickInjuries * 0.025 + oppInjuries * 0.015);
+    const finalProb    = Math.min(0.97, adjProb * injuryFactor);
+
+    if (finalProb < CONFIG.minProbability) return null;
+
     return {
-      sport, pick, opponent, prob, oppProb, odds,
+      sport, pick, opponent,
+      prob:     finalProb,
+      rawProb:  prob,
+      oppProb,  odds,
+      confidence,
+      pickInjuries, oppInjuries,
       hasRealOdds: !!(realOdds && realOdds > 1),
       game:      g.event_name || `${g.team_a_name} vs ${g.team_b_name}`,
       gameDate:  g.game_date,
@@ -313,6 +333,104 @@ let valueAlerted = new Set();
 const VALUE_MIN_ODDS = 1.6;
 const VALUE_MIN_EDGE = 0.03;
 const VALUE_MIN_BOOK_FAV = 0.55;
+
+// ── Bet Tracking & Bankroll ───────────────────
+// { date, sport, game, pick, odds, bet, result: null/'win'/'loss', profit: null }
+let activeBets   = [];   // Wetten die heute platziert wurden
+let betHistory   = [];   // Abgeschlossene Wetten mit Ergebnis
+let trackBankroll = CONFIG.bankroll;  // Dynamischer Bankroll
+
+// ESPN Ergebnisse abrufen
+async function fetchESPNResults(sport) {
+  const leagueMap = { nba: 'nba', soccer: 'soccer', tennis_atp: 'atp', tennis_wta: 'wta', ufc: 'ufc' };
+  const league = leagueMap[sport] || sport;
+  try {
+    const urls = [
+      `https://site.api.espn.com/apis/site/v2/sports/basketball/${league}/scoreboard`,
+      `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`,
+      `https://site.api.espn.com/apis/site/v2/sports/tennis/${league}/scoreboard`,
+    ];
+    const url = sport === 'nba'
+      ? `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard`
+      : sport === 'soccer'
+      ? `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`
+      : `https://site.api.espn.com/apis/site/v2/sports/tennis/${league}/scoreboard`;
+
+    const r = await axios.get(url, { timeout: 8000 });
+    const events = r.data?.events || [];
+    const results = [];
+    for (const ev of events) {
+      const comps = ev.competitions || [];
+      for (const comp of comps) {
+        if (!comp.competitors) continue;
+        const status = comp.status?.type?.completed;
+        if (!status) continue;
+        const winner = comp.competitors.find(c => c.winner);
+        const loser  = comp.competitors.find(c => !c.winner);
+        if (winner) results.push({
+          game:   ev.name || ev.shortName,
+          winner: winner.team?.displayName || winner.team?.name || '',
+          loser:  loser?.team?.displayName || loser?.team?.name || '',
+          score:  comp.competitors.map(c => c.score).join('-'),
+        });
+      }
+    }
+    return results;
+  } catch(e) {
+    return [];
+  }
+}
+
+// Pruefen ob Wetten abgeschlossen sind und Ergebnisse eintragen
+async function checkBetResults() {
+  if (!activeBets.length) return;
+  const today = new Date().toISOString().split('T')[0];
+  const sports = [...new Set(activeBets.map(b => b.sport))];
+  let settled = 0, totalProfit = 0;
+  const msgs = [];
+
+  for (const sport of sports) {
+    const results = await fetchESPNResults(sport);
+    if (!results.length) continue;
+
+    for (const bet of activeBets.filter(b => b.sport === sport && b.result === null)) {
+      // Suche nach Match-Ergebnis
+      const res = results.find(r =>
+        r.winner.toLowerCase().includes(bet.pick.toLowerCase()) ||
+        r.loser.toLowerCase().includes(bet.pick.toLowerCase())
+      );
+      if (!res) continue;
+
+      const won = res.winner.toLowerCase().includes(bet.pick.toLowerCase());
+      bet.result = won ? 'win' : 'loss';
+      bet.profit = won ? +(bet.bet * (bet.odds - 1)).toFixed(2) : -bet.bet;
+      trackBankroll = +(trackBankroll + bet.profit).toFixed(2);
+      totalProfit  += bet.profit;
+      settled++;
+
+      const icon = won ? '\u2705' : '\u274c';
+      msgs.push(
+        icon + ' *' + bet.pick + '* vs ' + bet.opponent + ' [' + sport.toUpperCase() + ']\n' +
+        (won ? 'Gewonnen' : 'Verloren') + ' | Quote ' + bet.odds + ' | ' +
+        (won ? '+' : '') + '\u20ac' + bet.profit.toFixed(2)
+      );
+    }
+  }
+
+  // Abgeschlossene Wetten in History verschieben
+  const done = activeBets.filter(b => b.result !== null);
+  betHistory.push(...done);
+  activeBets = activeBets.filter(b => b.result === null);
+
+  if (settled > 0 && CONFIG.chatId) {
+    const sign = totalProfit >= 0 ? '+' : '';
+    let msg = '*Wett-Ergebnisse*\n_' + nowStr() + '_\n\n';
+    msg += msgs.join('\n\n') + '\n\n';
+    msg += 'Netto: *' + sign + '\u20ac' + totalProfit.toFixed(2) + '*\n';
+    msg += 'Bankroll: *\u20ac' + trackBankroll.toFixed(2) + '*';
+    await send(msg);
+  }
+}
 
 async function runScan(notify = true) {
   console.log(`=== Scan ${nowStr()} ===`);
@@ -495,6 +613,136 @@ bot.on('message', async msg => {
   }
 
   // ── Budget-Befehl: /nba 80 oder /soccer 50 ──
+  // Budget+ Modus: /nba 50+ filtert auf positiven Erwartungswert
+  const budgetPlusMatch = text.match(/^\/?(nba|soccer|tennis_atp|tennis_wta|ufc|heute|live)\s+(\d+([.,]\d+)?)\+$/);
+  if (budgetPlusMatch) {
+    const sportArg  = budgetPlusMatch[1];
+    const budget    = parseFloat(budgetPlusMatch[2].replace(',', '.'));
+    const todayStr3 = new Date().toISOString().split('T')[0];
+    let pool = sportArg === 'heute' || sportArg === 'live'
+      ? lastBets.filter(b => b.gameDate === todayStr3)
+      : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr3);
+    if (!pool.length) return send(`_Keine heutigen Spiele fuer ${sportArg.toUpperCase()}._`, chatId);
+
+    // Sortiere nach Edge absteigend und entferne schlechteste Spiele
+    // bis erwarteter Gewinn positiv ist
+    pool = [...pool].sort((a, b) => b.edge - a.edge);
+
+    function quickEV(bets, bgt) {
+      const n = bets.length;
+      const eqPart = bgt * 0.20 / n;
+      const edgeSqs = bets.map(b => Math.max(0, b.edge) ** 2);
+      const totEq = edgeSqs.reduce((a,b)=>a+b,0);
+      let ev = 0;
+      bets.forEach((b, i) => {
+        const bet = eqPart + (totEq > 0 ? bgt * 0.80 * edgeSqs[i] / totEq : bgt * 0.80 / n);
+        ev += b.ev / 100 * Math.min(bet, b.hk * bgt > 0 ? b.hk * bgt : bet);
+      });
+      return ev;
+    }
+
+    // Entferne schlechtestes Spiel solange EV negativ und mind. 1 Spiel bleibt
+    while (pool.length > 1 && quickEV(pool, budget) < 0) {
+      pool.pop(); // entfernt das Spiel mit dem schlechtesten Edge
+    }
+
+    if (!pool.length) return send('_Kein Spiel mit positivem Erwartungswert gefunden._', chatId);
+
+    // Jetzt normale Budget-Nachricht mit gefiltertem Pool senden
+    const removed = (sportArg === 'heute' || sportArg === 'live'
+      ? lastBets.filter(b => b.gameDate === todayStr3)
+      : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr3)).length - pool.length;
+
+    const posEdgesP  = pool.map(b => Math.max(0, b.edge));
+    const totalEdgeP = posEdgesP.reduce((a,b)=>a+b,0);
+    const cntP       = pool.length;
+    const edgeSqP    = posEdgesP.map(e => e*e);
+    const totEqP     = edgeSqP.reduce((a,b)=>a+b,0);
+
+    function analyzeAllP(bets) {
+      const n = bets.length, total = bets.reduce((s,b)=>s+b.bet,0);
+      if (n > 20) return null;
+      let probProfit = 0, expProfit = 0;
+      const byWrong = {};
+      for (let mask = 0; mask < (1<<n); mask++) {
+        let prob=1,profit=-total,wrong=0;
+        for (let i=0;i<n;i++) {
+          if (mask&(1<<i)){prob*=bets[i].prob;profit+=bets[i].bet*bets[i].odds;}else{prob*=(1-bets[i].prob);wrong++;}
+        }
+        if (!byWrong[wrong]) byWrong[wrong]={total:0,profitable:0,sumProfit:0};
+        byWrong[wrong].total++;byWrong[wrong].sumProfit+=profit;
+        if (profit>0){byWrong[wrong].profitable++;probProfit+=prob;}
+        expProfit+=prob*profit;
+      }
+      return {probProfit,expProfit,byWrong};
+    }
+
+    let allocP = pool.map((b,i)=>{
+      const eq=budget*0.20/cntP, ep=totEqP>0?budget*0.80*edgeSqP[i]/totEqP:budget*0.80/cntP;
+      const kc=b.hk*budget, raw=eq+ep;
+      return {...b, bet:Math.max(0.01,Math.min(raw,kc>0?kc:raw))};
+    });
+    let scP=allocP.reduce((s,b)=>s+b.bet,0);
+    if (scP>budget){const sc=budget/scP;allocP=allocP.map(b=>({...b,bet:b.bet*sc}));}
+
+    let bestAP=analyzeAllP(allocP),bestSP=bestAP?bestAP.probProfit:0;
+    for (let iter=0;iter<400;iter++){
+      const byE=[...allocP].sort((a,b2)=>(b2.edge*b2.edge)-(a.edge*a.edge));
+      const best=byE[0],worst=byE[byE.length-1];
+      if (best.game===worst.game&&best.pick===worst.pick) break;
+      const shift=Math.max(0.01,Math.min(worst.bet*0.04,0.30));
+      if (shift<0.005) break;
+      const cand=allocP.map(b=>{
+        if(b.game===worst.game&&b.pick===worst.pick)return{...b,bet:Math.max(0.01,b.bet-shift)};
+        if(b.game===best.game&&b.pick===best.pick)return{...b,bet:b.bet+shift};
+        return b;
+      });
+      const cA=analyzeAllP(cand);
+      if(!cA)break;
+      if(cA.probProfit>bestSP||(Math.abs(cA.probProfit-bestSP)<0.001&&cA.expProfit>bestAP.expProfit)){allocP=cand;bestSP=cA.probProfit;bestAP=cA;}
+    }
+
+    allocP=allocP.map(b=>({...b,bet:+Math.max(0.01,b.bet).toFixed(2),gain:+(b.bet*(b.odds-1)).toFixed(2)})).sort((a,b2)=>(b2.edge*b2.edge)-(a.edge*a.edge));
+    const totalP=+(allocP.reduce((s,b)=>s+b.bet,0)).toFixed(2);
+    const totalGP=+(allocP.reduce((s,b)=>s+b.gain,0)).toFixed(2);
+    const finAP=analyzeAllP(allocP);
+    const expP=finAP?+finAP.expProfit.toFixed(2):0;
+    const probWP=finAP?(finAP.probProfit*100).toFixed(1):'?';
+    const bwP=finAP?.byWrong||{};
+    const sgP=[...allocP].sort((a,b2)=>b2.gain-a.gain);
+    let beP=0,runP=-totalP;
+    for(const b of sgP){runP+=b.gain+b.bet;beP++;if(runP>=0)break;}
+
+    let mp=`*${sportArg.toUpperCase()} heute+ | Budget: \u20ac${budget.toFixed(2)}*\n`;
+    mp+=`_${nowStr()} | ${allocP.length} Spiele (${removed} gefiltert) | Einsatz: \u20ac${totalP}_\n\n`;
+    mp+=`*Gewinn-Szenarien:*\n`;
+    mp+=`Wahrsch. im Plus: *${probWP}%*\n`;
+    mp+=`Erw. Gewinn: *${expP>=0?'+':''}\u20ac${expP}*\n`;
+    mp+=`Alle richtig: +\u20ac${totalGP}\n`;
+    for(let k=0;k<=Math.min(5,allocP.length);k++){
+      const s=bwP[k]||{total:0,profitable:0,sumProfit:0};
+      if(!s.total)continue;
+      const pct=(s.profitable/s.total*100).toFixed(0);
+      const avg=(s.sumProfit/s.total).toFixed(2);
+      const sign=parseFloat(avg)>=0?'+':'';
+      const icon=k===0?'\u2705':k<=2?'\u26ab':'\u26aa';
+      mp+=`${icon} ${k} falsch: ${s.profitable}/${s.total} (${pct}%) | avg ${sign}\u20ac${avg}\n`;
+    }
+    mp+=`Break-even: ${beP} von ${allocP.length}\n\n`;
+    for(const b of allocP){
+      const eSign=b.edge>=0?'+':'';
+      const sq=b.edge*b.edge;
+      const star=sq>0.01?'\u2605 ':sq>0.001?'\u25cb ':'\u00b7 ';
+      const real=b.hasRealOdds?'':'~';
+      const profit=+(b.bet*(b.odds-1)).toFixed(2);
+      mp+=`${star}*${b.pick}* vs ${b.opponent}\n`;
+      mp+=`_${b.dateLabel}_\n`;
+      mp+=`AI: ${(b.prob*100).toFixed(0)}% | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%\n`;
+      mp+=`Quote: ${real}${b.odds.toFixed(2)} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}\n\n`;
+    }
+    return send(mp.trim(), chatId);
+  }
+
   const budgetMatch = text.match(/^\/?(nba|soccer|tennis_atp|tennis_wta|ufc|heute|live)\s+(\d+([.,]\d+)?)$/);
   if (budgetMatch) {
     const sportArg  = budgetMatch[1];
@@ -647,13 +895,87 @@ bot.on('message', async msg => {
       const profit = +(b.bet * (b.odds - 1)).toFixed(2);
       msg += `${star}*${b.pick}* vs ${b.opponent}\n`;
       msg += `_${b.dateLabel}_\n`;
-      msg += `AI: ${(b.prob*100).toFixed(0)}% | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%\n`;
+      const confStr  = b.confidence ? ` | Conf: ${(b.confidence*100).toFixed(0)}%` : '';
+      const injStr   = (b.pickInjuries > 0 || b.oppInjuries > 0)
+        ? ` | \u{1FA79} ${b.pickInjuries}/${b.oppInjuries}` : '';
+      const rawStr   = b.rawProb && Math.abs(b.rawProb - b.prob) > 0.01
+        ? ` (roh: ${(b.rawProb*100).toFixed(0)}%)` : '';
+      msg += `AI: ${(b.prob*100).toFixed(0)}%${rawStr} | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%${confStr}${injStr}\n`;
       msg += `Quote: ${real}${b.odds.toFixed(2)} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}\n\n`;
     }
     return send(msg.trim(), chatId);
   }
 
-  if (['/reset', 'reset'].includes(text)) {
+  // /gesetzt nba 50 — trackt heutige Wetten
+  const gesetzMatch = text.match(/^\/?(gesetzt|placed)\s+(nba|soccer|tennis_atp|tennis_wta|ufc|heute)\s+(\d+([.,]\d+)?)$/);
+  if (gesetzMatch) {
+    const sportArg = gesetzMatch[2];
+    const budget   = parseFloat(gesetzMatch[3].replace(',', '.'));
+    const todayStr = new Date().toISOString().split('T')[0];
+    const pool = sportArg === 'heute'
+      ? lastBets.filter(b => b.gameDate === todayStr)
+      : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr);
+
+    if (!pool.length) return send('_Keine Spiele gefunden. Erst /scan starten._', chatId);
+
+    // Budget-Allokation berechnen (gleiche Logik wie normaler Budget-Befehl)
+    const posE = pool.map(b => Math.max(0, b.edge));
+    const totE = posE.reduce((a,b)=>a+b,0);
+    const cnt  = pool.length;
+    const eqSq = posE.map(e => e*e);
+    const totSq = eqSq.reduce((a,b)=>a+b,0);
+
+    const bets = pool.map((b, i) => {
+      const eq = budget * 0.20 / cnt;
+      const ep = totSq > 0 ? budget * 0.80 * eqSq[i] / totSq : budget * 0.80 / cnt;
+      const kc = b.hk * budget;
+      const raw = eq + ep;
+      const betAmt = +Math.max(0.01, Math.min(raw, kc > 0 ? kc : raw)).toFixed(2);
+      return {
+        sport: b.sport, game: b.game, pick: b.pick, opponent: b.opponent,
+        odds: b.odds, bet: betAmt, result: null, profit: null,
+        date: todayStr,
+      };
+    });
+
+    // Skalieren
+    const tot = bets.reduce((s,b)=>s+b.bet,0);
+    if (tot > budget) { const sc=budget/tot; bets.forEach(b=>b.bet=+(b.bet*sc).toFixed(2)); }
+
+    activeBets.push(...bets);
+    CONFIG.bankroll = trackBankroll;
+
+    let msg = '*Wetten gespeichert!* \u{1F4BE}\n_' + nowStr() + '_\n\n';
+    msg += 'Ich checke Ergebnisse automatisch alle 30 Min.\n\n';
+    bets.forEach(b => {
+      msg += '\u2022 *' + b.pick + '* vs ' + b.opponent + ' | \u20ac' + b.bet.toFixed(2) + '\n';
+    });
+    msg += '\nAktiver Bankroll: *\u20ac' + trackBankroll.toFixed(2) + '*';
+    return send(msg, chatId);
+  }
+
+  // /stats — zeigt Gewinn/Verlust-Statistik
+  if (['/stats', 'stats'].includes(text)) {
+    if (!betHistory.length && !activeBets.length) {
+      return send('_Noch keine Wetten getrackt. Nutze /gesetzt nba 50 nach dem Wetten._', chatId);
+    }
+    const done = betHistory.filter(b => b.result !== null);
+    const wins = done.filter(b => b.result === 'win').length;
+    const losses = done.filter(b => b.result === 'loss').length;
+    const totalProfit = done.reduce((s,b) => s + (b.profit||0), 0);
+    const roi = done.length > 0 ? (totalProfit / done.reduce((s,b)=>s+b.bet,0) * 100) : 0;
+
+    let msg = '*Statistik*\n_' + nowStr() + '_\n\n';
+    msg += 'Abgeschlossen: ' + done.length + ' Wetten\n';
+    msg += '\u2705 Gewonnen: ' + wins + ' | \u274c Verloren: ' + losses + '\n';
+    msg += 'Trefferquote: *' + (done.length > 0 ? (wins/done.length*100).toFixed(1) : 0) + '%*\n';
+    msg += 'Gesamtprofit: *' + (totalProfit>=0?'+':'') + '\u20ac' + totalProfit.toFixed(2) + '*\n';
+    msg += 'ROI: *' + (roi>=0?'+':'') + roi.toFixed(1) + '%*\n';
+    msg += 'Bankroll: *\u20ac' + trackBankroll.toFixed(2) + '*\n';
+    if (activeBets.length) msg += '\nOffen: ' + activeBets.length + ' Wetten laufen noch.';
+    return send(msg, chatId);
+  }
+
     seenGames.clear(); liveAlerted.clear(); valueAlerted.clear();
     send('_Alle Alerts zurueckgesetzt. Naechster Scan sendet alles neu._', chatId);
     return runScan(true);
@@ -707,6 +1029,11 @@ bot.on('message', async msg => {
 const rule  = new schedule.RecurrenceRule();
 rule.minute = new schedule.Range(0, 59, CONFIG.pollMinutes);
 schedule.scheduleJob(rule, () => runScan(true));
+
+// Ergebnisse alle 30 Minuten pruefen
+const ruleResults = new schedule.RecurrenceRule();
+ruleResults.minute = new schedule.Range(0, 59, 30);
+schedule.scheduleJob(ruleResults, () => checkBetResults());
 
 console.log(`Telegram Bot startet... ${nowStr()}`);
 console.log('Bot: t.me/bet_2_bet_bot');
