@@ -754,6 +754,34 @@ bot.on('message', async msg => {
       return send(`_Keine heutigen Spiele fuer ${sportArg.toUpperCase()} gefunden._`, chatId);
     }
 
+    // ── Warnungen pruefen ─────────────────────
+    const allNegativeEdge = pool.every(b => b.edge < 0);
+    const highInjuryGames = pool.filter(b => (b.pickInjuries || 0) > 5);
+
+    if (allNegativeEdge || highInjuryGames.length > 0) {
+      let warn = '\u26a0\ufe0f *Achtung: Schlechte Wettbedingungen!*\n\n';
+
+      if (allNegativeEdge) {
+        const worstEdge = Math.min(...pool.map(b => b.edge));
+        const bestEdge  = Math.max(...pool.map(b => b.edge));
+        warn += '\u274c *Kein einziges Spiel hat positiven Edge*\n';
+        warn += `Bester Edge: ${(bestEdge*100).toFixed(1)}% | Schlechtester: ${(worstEdge*100).toFixed(1)}%\n`;
+        warn += '_Der Buchmacher hat bei allen Spielen bessere Quoten als die AI._\n\n';
+      }
+
+      if (highInjuryGames.length > 0) {
+        warn += '\u{1FA79} *Hohe Verletzungsausfaelle:*\n';
+        highInjuryGames.forEach(b => {
+          warn += `\u2022 ${b.pick} vs ${b.opponent}: ${b.pickInjuries} Ausfaelle beim Pick\n`;
+        });
+        warn += '\n';
+      }
+
+      warn += `_Empfehlung: Nutze */${sportArg} ${budget}+* um nur Spiele mit positivem Erwartungswert zu sehen._\n`;
+      warn += `_Oder warte auf bessere Quoten wenn die Spiele live gehen._`;
+      return send(warn, chatId);
+    }
+
     const posEdges  = pool.map(b => Math.max(0, b.edge));
     const cnt       = pool.length;
 
