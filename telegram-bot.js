@@ -308,6 +308,11 @@ function allocateBets(predictions) {
 let lastBets     = [];
 let lastScanTime = null;
 let seenGames    = new Set();
+let liveAlerted  = new Set();
+let valueAlerted = new Set();
+const VALUE_MIN_ODDS = 1.6;
+const VALUE_MIN_EDGE = 0.03;
+const VALUE_MIN_BOOK_FAV = 0.55;
 
 async function runScan(notify = true) {
   console.log(`=== Scan ${nowStr()} ===`);
@@ -338,6 +343,59 @@ async function runScan(notify = true) {
   });
 
   if (newBets.length && notify) await sendAlert(newBets);
+
+  // Live-Alert
+  if (notify) {
+    const sportMap = {};
+    for (const b of lastBets) {
+      if (!sportMap[b.sport]) sportMap[b.sport] = { total: 0, real: 0 };
+      sportMap[b.sport].total++;
+      if (b.hasRealOdds) sportMap[b.sport].real++;
+    }
+    const today0 = new Date().toISOString().split('T')[0];
+    for (const [sport, info] of Object.entries(sportMap)) {
+      const lk = sport + ':' + today0;
+      if (info.real > 0 && !liveAlerted.has(lk)) {
+        liveAlerted.add(lk);
+        const pct = Math.round(info.real / info.total * 100);
+        await send(
+          '\u{1F7E2} *' + sport.toUpperCase() + ' ist jetzt live!*\n' +
+          'Oddify + Tipico-Quoten online (' + info.real + '/' + info.total + ' Spiele, ' + pct + '% echt)\n\n' +
+          '_Schreib /' + sport + ' oder /' + sport + ' 50 fuer Empfehlungen_'
+        );
+      }
+    }
+  }
+
+  // Value-Alert: echte Quote >= 1.6, AI > Buch, Buch favorisiert
+  if (notify) {
+    const todayV = new Date().toISOString().split('T')[0];
+    for (const b of lastBets) {
+      if (
+        b.hasRealOdds &&
+        b.odds >= VALUE_MIN_ODDS &&
+        b.edge >= VALUE_MIN_EDGE &&
+        (1 / b.odds) >= VALUE_MIN_BOOK_FAV &&
+        b.gameDate === todayV
+      ) {
+        const vk = 'value:' + b.game + ':' + b.pick;
+        if (!valueAlerted.has(vk)) {
+          valueAlerted.add(vk);
+          const eSign = b.edge >= 0 ? '+' : '';
+          await send(
+            '\u26a1 *VALUE ALERT ' + b.sport.toUpperCase() + '*\n\n' +
+            '*' + b.pick + '* vs ' + b.opponent + '\n' +
+            '_' + b.dateLabel + '_\n\n' +
+            'Buch: ' + (1/b.odds*100).toFixed(0) + '% | AI: ' + (b.prob*100).toFixed(0) + '%\n' +
+            'Edge: ' + eSign + (b.edge*100).toFixed(1) + '%\n' +
+            '*Tipico-Quote: ' + b.odds.toFixed(2) + '* \u2b50\n\n' +
+            '_/' + b.sport + ' 50 fuer volle Aufteilung_'
+          );
+        }
+      }
+    }
+  }
+
   console.log(`=== Fertig | ${lastBets.length} gesamt | ${newBets.length} neu ===`);
 }
 
@@ -593,6 +651,12 @@ bot.on('message', async msg => {
       msg += `Quote: ${real}${b.odds.toFixed(2)} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}\n\n`;
     }
     return send(msg.trim(), chatId);
+  }
+
+  if (['/reset', 'reset'].includes(text)) {
+    seenGames.clear(); liveAlerted.clear(); valueAlerted.clear();
+    send('_Alle Alerts zurueckgesetzt. Naechster Scan sendet alles neu._', chatId);
+    return runScan(true);
   }
 
   // Sportart
