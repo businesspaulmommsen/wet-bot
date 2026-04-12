@@ -17,7 +17,7 @@ const CONFIG = {
   oddifyAuthUrl: 'https://fouddhhpuyrxugfhuqmq.supabase.co/auth/v1/token?grant_type=password',
   oddifyApiKey:  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvdWRkaGhwdXlyeHVnZmh1cW1xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY5MjA3ODcsImV4cCI6MjA3MjQ5Njc4N30.WVnGOt-nuubcVQLDskLqZSrcezK4OkbUFOUOLXWbqv4',
   oddifyEmail:   'paul2004mm@gmail.com',
-  oddifyPassword: 'bujzyn-makVur-pysqy1',
+  oddifyPassword: process.env.ODDIFY_PASSWORD || '',
   oddifyToken:   null,
   oddifyTokenExp: 0,
 
@@ -562,21 +562,13 @@ bot.on('message', async msg => {
       if (runningBE >= 0) break;
     }
 
+    let msg = `*${sportArg.toUpperCase()} heute | Budget: \u20ac${budget.toFixed(2)}*\n`;
+    msg    += `_${nowStr()} | ${allocated.length} Spiele | Einsatz: \u20ac${total}_\n\n`;
 
-    let msg = `*${sportArg.toUpperCase()} heute | Budget: \u20ac${budget.toFixed(2)}*
-`;
-    msg    += `_${nowStr()} | ${allocated.length} Spiele | Einsatz: \u20ac${total}_
-
-`;
-
-    msg += `*Gewinn-Szenarien:*
-`;
-    msg += `Wahrsch. im Plus: *${probWin}%*
-`;
-    msg += `Erw. Gewinn: *${expProfit >= 0 ? '+' : ''}\u20ac${expProfit}*
-`;
-    msg += `Alle richtig: +\u20ac${totalGain}
-`;
+    msg += `*Gewinn-Szenarien:*\n`;
+    msg += `Wahrsch. im Plus: *${probWin}%*\n`;
+    msg += `Erw. Gewinn: *${expProfit >= 0 ? '+' : ''}\u20ac${expProfit}*\n`;
+    msg += `Alle richtig: +\u20ac${totalGain}\n`;
     const maxWrong = Math.min(5, allocated.length);
     for (let k = 0; k <= maxWrong; k++) {
       const s = bw[k] || { total: 0, profitable: 0, sumProfit: 0 };
@@ -585,12 +577,9 @@ bot.on('message', async msg => {
       const avg = (s.sumProfit / s.total).toFixed(2);
       const sign = parseFloat(avg) >= 0 ? '+' : '';
       const icon = k === 0 ? '\u2705' : k <= 2 ? '\u26ab' : '\u26aa';
-      msg += `${icon} ${k} falsch: ${s.profitable}/${s.total} (${pct}%) | avg ${sign}\u20ac${avg}
-`;
+      msg += `${icon} ${k} falsch: ${s.profitable}/${s.total} (${pct}%) | avg ${sign}\u20ac${avg}\n`;
     }
-    msg += `Break-even: ${breakEvenCount} von ${allocated.length}
-
-`;
+    msg += `Break-even: ${breakEvenCount} von ${allocated.length}\n\n`;
 
     for (const b of allocated) {
       const eSign  = b.edge >= 0 ? '+' : '';
@@ -598,15 +587,10 @@ bot.on('message', async msg => {
       const star   = edgeSqVal > 0.01 ? '\u2605 ' : edgeSqVal > 0.001 ? '\u25cb ' : '\u00b7 ';
       const real   = b.hasRealOdds ? '' : '~';
       const profit = +(b.bet * (b.odds - 1)).toFixed(2);
-      msg += `${star}*${b.pick}* vs ${b.opponent}
-`;
-      msg += `_${b.dateLabel}_
-`;
-      msg += `AI: ${(b.prob*100).toFixed(0)}% | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%
-`;
-      msg += `Quote: ${real}${b.odds.toFixed(2)} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}
-
-`;
+      msg += `${star}*${b.pick}* vs ${b.opponent}\n`;
+      msg += `_${b.dateLabel}_\n`;
+      msg += `AI: ${(b.prob*100).toFixed(0)}% | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%\n`;
+      msg += `Quote: ${real}${b.odds.toFixed(2)} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}\n\n`;
     }
     return send(msg.trim(), chatId);
   }
