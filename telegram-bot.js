@@ -345,11 +345,6 @@ async function fetchESPNResults(sport) {
   const leagueMap = { nba: 'nba', soccer: 'soccer', tennis_atp: 'atp', tennis_wta: 'wta', ufc: 'ufc' };
   const league = leagueMap[sport] || sport;
   try {
-    const urls = [
-      `https://site.api.espn.com/apis/site/v2/sports/basketball/${league}/scoreboard`,
-      `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`,
-      `https://site.api.espn.com/apis/site/v2/sports/tennis/${league}/scoreboard`,
-    ];
     const url = sport === 'nba'
       ? `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard`
       : sport === 'soccer'
@@ -570,7 +565,7 @@ bot.on('message', async msg => {
 
   if (['/hilfe', 'hilfe', '?', '/help'].includes(text)) {
     return send(
-      '*Befehle:*\n\n/wetten - alle Spiele\n/heute - nur heute\n/morgen - nur morgen\n/top3 - Top 3 nach Edge\n/edge - alle nach Edge\n/nba /soccer /ufc /tennis\\_atp /tennis\\_wta\n/scan - sofort scannen\n/status - Bot-Status\n/bankroll 80 - Bankroll aendern\n/tage 5 - Tage voraus aendern\n\nTeamname tippen, z.B. _Bayern_',
+      '*Befehle:*\n\n/wetten - alle Spiele\n/heute - nur heute\n/morgen - nur morgen\n/top3 - Top 3 nach Edge\n/edge - alle nach Edge\n/nba /soccer /ufc /tennis\\_atp /tennis\\_wta\n/scan - sofort scannen\n/status - Bot-Status\n/bankroll 80 - Bankroll aendern\n/tage 5 - Tage voraus aendern\n/reset - Alerts zuruecksetzen\n\nTeamname tippen, z.B. _Bayern_',
       chatId
     );
   }
@@ -612,6 +607,13 @@ bot.on('message', async msg => {
     return send(formatBets([...lastBets].sort((a, b) => b.edge - a.edge), 'Nach Edge'), chatId);
   }
 
+  // ── Reset-Befehl ──────────────────────────────
+  if (['/reset', 'reset'].includes(text)) {
+    seenGames.clear(); liveAlerted.clear(); valueAlerted.clear();
+    send('_Alle Alerts zurueckgesetzt. Naechster Scan sendet alles neu._', chatId);
+    return runScan(true);
+  }
+
   // ── Budget-Befehl: /nba 80 oder /soccer 50 ──
   // Budget+ Modus: /nba 50+ filtert auf positiven Erwartungswert
   const budgetPlusMatch = text.match(/^\/?(nba|soccer|tennis_atp|tennis_wta|ufc|heute|live)\s+(\d+([.,]\d+)?)\+$/);
@@ -624,8 +626,6 @@ bot.on('message', async msg => {
       : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr3);
     if (!pool.length) return send(`_Keine heutigen Spiele fuer ${sportArg.toUpperCase()}._`, chatId);
 
-    // Sortiere nach Edge absteigend und entferne schlechteste Spiele
-    // bis erwarteter Gewinn positiv ist
     pool = [...pool].sort((a, b) => b.edge - a.edge);
 
     function quickEV(bets, bgt) {
@@ -641,20 +641,17 @@ bot.on('message', async msg => {
       return ev;
     }
 
-    // Entferne schlechtestes Spiel solange EV negativ und mind. 1 Spiel bleibt
     while (pool.length > 1 && quickEV(pool, budget) < 0) {
-      pool.pop(); // entfernt das Spiel mit dem schlechtesten Edge
+      pool.pop();
     }
 
     if (!pool.length) return send('_Kein Spiel mit positivem Erwartungswert gefunden._', chatId);
 
-    // Jetzt normale Budget-Nachricht mit gefiltertem Pool senden
     const removed = (sportArg === 'heute' || sportArg === 'live'
       ? lastBets.filter(b => b.gameDate === todayStr3)
       : lastBets.filter(b => b.sport === sportArg && b.gameDate === todayStr3)).length - pool.length;
 
     const posEdgesP  = pool.map(b => Math.max(0, b.edge));
-    const totalEdgeP = posEdgesP.reduce((a,b)=>a+b,0);
     const cntP       = pool.length;
     const edgeSqP    = posEdgesP.map(e => e*e);
     const totEqP     = edgeSqP.reduce((a,b)=>a+b,0);
@@ -749,7 +746,6 @@ bot.on('message', async msg => {
     const budget    = parseFloat(budgetMatch[2].replace(',', '.'));
     const todayStr2 = new Date().toISOString().split('T')[0];
 
-    // Spiele filtern
     let pool = sportArg === 'heute' || sportArg === 'live'
       ? lastBets.filter(b => b.gameDate === todayStr2)
       : lastBets.filter(b => (b.sport === sportArg) && b.gameDate === todayStr2);
@@ -758,20 +754,8 @@ bot.on('message', async msg => {
       return send(`_Keine heutigen Spiele fuer ${sportArg.toUpperCase()} gefunden._`, chatId);
     }
 
-    // Budget neu aufteilen mit Half-Kelly + Edge-Gewichtung
     const posEdges  = pool.map(b => Math.max(0, b.edge));
-    const totalEdge = posEdges.reduce((a, b) => a + b, 0);
     const cnt       = pool.length;
-    const equalPool = budget * 0.40;
-    const edgePool  = budget * 0.60;
-
-    // ══════════════════════════════════════════════════════
-    // ══════════════════════════════════════════════════════
-    // VOLLSTAENDIGE PORTFOLIO-OPTIMIERUNG
-    // Analysiert ALLE 2^N Szenarien gewichtet nach Wahrscheinlichkeit
-    // Optimiert P(Gewinn > 0) - maximiert profitable Szenarien
-    // Edge^2-Gewicht: starke Differenzierung AI vs Buch
-    // ══════════════════════════════════════════════════════
 
     function analyzeAll(bets) {
       const n     = bets.length;
@@ -799,7 +783,6 @@ bot.on('message', async msg => {
       return { probProfit, expProfit, byWrong };
     }
 
-    // Startallokation: 20% gleichmaessig + 80% nach edge^2
     const edgeSq      = posEdges.map(e => e * e);
     const totalEdgeSq = edgeSq.reduce((a, b) => a + b, 0);
 
@@ -811,14 +794,12 @@ bot.on('message', async msg => {
       return { ...b, bet: Math.max(0.01, Math.min(raw, kellyCap > 0 ? kellyCap : raw)) };
     });
 
-    // Skalieren auf Budget
     let scaleT = allocated.reduce((s, b) => s + b.bet, 0);
     if (scaleT > budget) {
       const sc = budget / scaleT;
       allocated = allocated.map(b => ({ ...b, bet: b.bet * sc }));
     }
 
-    // Iterative Optimierung: maximiere P(Gewinn > 0)
     let bestA = analyzeAll(allocated);
     let bestScore = bestA ? bestA.probProfit : 0;
 
@@ -918,11 +899,9 @@ bot.on('message', async msg => {
 
     if (!pool.length) return send('_Keine Spiele gefunden. Erst /scan starten._', chatId);
 
-    // Budget-Allokation berechnen (gleiche Logik wie normaler Budget-Befehl)
-    const posE = pool.map(b => Math.max(0, b.edge));
-    const totE = posE.reduce((a,b)=>a+b,0);
-    const cnt  = pool.length;
-    const eqSq = posE.map(e => e*e);
+    const posE  = pool.map(b => Math.max(0, b.edge));
+    const cnt   = pool.length;
+    const eqSq  = posE.map(e => e*e);
     const totSq = eqSq.reduce((a,b)=>a+b,0);
 
     const bets = pool.map((b, i) => {
@@ -938,7 +917,6 @@ bot.on('message', async msg => {
       };
     });
 
-    // Skalieren
     const tot = bets.reduce((s,b)=>s+b.bet,0);
     if (tot > budget) { const sc=budget/tot; bets.forEach(b=>b.bet=+(b.bet*sc).toFixed(2)); }
 
@@ -974,11 +952,6 @@ bot.on('message', async msg => {
     msg += 'Bankroll: *\u20ac' + trackBankroll.toFixed(2) + '*\n';
     if (activeBets.length) msg += '\nOffen: ' + activeBets.length + ' Wetten laufen noch.';
     return send(msg, chatId);
-  }
-
-    seenGames.clear(); liveAlerted.clear(); valueAlerted.clear();
-    send('_Alle Alerts zurueckgesetzt. Naechster Scan sendet alles neu._', chatId);
-    return runScan(true);
   }
 
   // Sportart
