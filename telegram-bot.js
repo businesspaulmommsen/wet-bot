@@ -9,7 +9,7 @@ const axios       = require('axios');
 const schedule    = require('node-schedule');
 
 const CONFIG = {
-  telegramToken:  '8686433824:AAFiiaXYy2_HLcTobd-gLSRMw3gsQdQ52Q0',
+  telegramToken:  process.env.TELEGRAM_TOKEN || '',
   chatId:         null,
   oddifyApiUrl:   'https://fouddhhpuyrxugfhuqmq.supabase.co/functions/v1/get-predictions',
   oddifyAuthUrl:  'https://fouddhhpuyrxugfhuqmq.supabase.co/auth/v1/token?grant_type=password',
