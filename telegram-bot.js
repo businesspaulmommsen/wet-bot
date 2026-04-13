@@ -745,8 +745,11 @@ function formatBudgetMsg(sportArg, budget, allocated, label) {
     const real    = b.hasRealOdds?'':'~';
     const book    = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
     const profit  = +(b.bet*(b.odds-1)).toFixed(2);
-    const whereBudget = b.sport === 'ufc' && b.bestBookmaker
-      ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*` : '';
+    const whereBudget = b.sport === 'ufc'
+      ? (b.bestBookmaker
+        ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*`
+        : `\n\u{1F4CD} Quote pruefen bei: Unibet, Bet365, Betway`)
+      : '';
     const confStr = b.confidence ? ` | Conf: ${(b.confidence*100).toFixed(0)}%` : '';
     const injStr  = (b.pickInjuries > 0 || b.oppInjuries > 0) ? ` | \u{1FA79} ${b.pickInjuries||0}/${b.oppInjuries||0}` : '';
     const rawStr  = b.rawProb && Math.abs(b.rawProb-b.prob) > 0.01 ? ` (roh: ${(b.rawProb*100).toFixed(0)}%)` : '';
