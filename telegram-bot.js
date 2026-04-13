@@ -106,15 +106,23 @@ async function fetchEspnTournaments() {
 // ── UFC beste Quoten Cache ────────────────────
 const ufcBestOdds = {};
 
-// EU-verfuegbare Buchmacher (kein US-only)
+// In Deutschland legale Buchmacher
 const EU_BOOKMAKERS = new Set([
   'unibet', 'unibet_nl', 'unibet_se', 'unibet_uk', 'unibet_fr',
-  'bet365', 'betway', 'williamhill', 'betfair_ex_eu', 'betfair_ex_uk',
-  'betfair_sb_uk', 'paddypower', 'betsson', 'nordicbet', 'coolbet',
-  'leovegas', 'leovegas_se', 'marathonbet', 'matchbook', 'pinnacle',
-  'onexbet', 'betclic_fr', 'grosvenor', 'livescorebet', 'virginbet',
-  'sport888', 'betmgm', 'draftkings', 'caesars',
+  'bet365', 'betway', 'williamhill', 'betsson', 'nordicbet',
+  'leovegas', 'marathonbet', 'pinnacle', 'sport888',
+  'betfair_ex_eu', 'matchbook', 'coolbet',
 ]);
+
+// Anzeigename fuer Buchmacher
+const BOOKMAKER_NAMES = {
+  'unibet': 'Unibet', 'unibet_nl': 'Unibet', 'unibet_se': 'Unibet',
+  'unibet_uk': 'Unibet', 'unibet_fr': 'Unibet',
+  'bet365': 'Bet365', 'betway': 'Betway', 'williamhill': 'William Hill',
+  'betsson': 'Betsson', 'nordicbet': 'NordicBet', 'leovegas': 'LeoVegas',
+  'marathonbet': 'Marathonbet', 'pinnacle': 'Pinnacle', 'sport888': '888sport',
+  'betfair_ex_eu': 'Betfair', 'matchbook': 'Matchbook', 'coolbet': 'Coolbet',
+};
 
 async function fetchUfcBestOdds() {
   if (!await ensureOddifyToken()) return;
@@ -131,7 +139,7 @@ async function fetchUfcBestOdds() {
       const sel = o.selection;
       if (!ufcBestOdds[key]) ufcBestOdds[key] = {};
       if (!ufcBestOdds[key][sel] || o.price_decimal > ufcBestOdds[key][sel].price) {
-        ufcBestOdds[key][sel] = { price: o.price_decimal, bookmaker: o.bookmaker };
+        ufcBestOdds[key][sel] = { price: o.price_decimal, bookmaker: BOOKMAKER_NAMES[o.bookmaker] || o.bookmaker };
       }
     });
     console.log(`  UFC odds_history: ${Object.keys(ufcBestOdds).length} Kaempfe geladen`);
@@ -270,20 +278,33 @@ function parseGame(g, sport) {
     const odds = bestOdds ? bestOdds.price : estimateOdds(finalProb);
 
     // Match against ESPN to get real date/time and filter old fights
-    // Search ESPN fights by last name matching
+    // Match gegen ESPN fuer echtes Datum
     const lastA = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
     const lastB = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
     let espnInfo = null;
+
+    // Versuche Matching mit Nachnamen
     for (const [key, info] of Object.entries(ufcEspnFights)) {
-      const kparts = key.replace(' vs ', ' ').split(' ');
-      if (kparts.some(p => p === lastA) && kparts.some(p => p === lastB)) {
-        espnInfo = info;
-        break;
+      const kn = key.toLowerCase();
+      if (kn.includes(lastA) || kn.includes(lastB)) {
+        // Mindestens ein Name muss matchen, dann pruefen ob beide da
+        const kparts = kn.replace(' vs ', ' ').split(' ');
+        const matchA = kparts.some(p => p.includes(lastA.slice(0,4)));
+        const matchB = kparts.some(p => p.includes(lastB.slice(0,4)));
+        if (matchA && matchB) { espnInfo = info; break; }
       }
     }
 
-    // If ESPN doesn't know this fight, skip it (old/wrong data)
-    if (!espnInfo) return null;
+    // Kein ESPN Match: nutze naechstes bekanntes UFC Event-Datum als Fallback
+    if (!espnInfo) {
+      const ufcDates = Object.values(ufcEspnFights).map(i => i.dateStr).filter(Boolean);
+      if (ufcDates.length > 0) {
+        const nextDate = ufcDates.sort()[0];
+        espnInfo = { dateStr: nextDate, dateLabel: formatDate(nextDate + 'T21:00:00'), eventName: 'UFC' };
+      } else {
+        return null; // Kein UFC Event bekannt
+      }
+    }
 
     // Check date is within daysAhead
     const fightDate = new Date(espnInfo.dateStr + 'T12:00:00');
@@ -339,19 +360,26 @@ function parseGame(g, sport) {
     const oppP   = Math.min(p1Prob, p2Prob);
     if (prob < CONFIG.minProbability) return null;
     const tournInfo  = espnTournaments[sport] || {};
-    const gameDate   = tournInfo.dateStr || todayStr;
-    const endDate    = tournInfo.endStr  || todayStr;
+    const endDate    = tournInfo.endStr || todayStr;
     const tournament = g.tournament || tournInfo.name || sport.toUpperCase();
-    const round      = g.round ? ` | ${g.round}` : '';
+    const round      = g.round ? ` ${g.round}` : '';
     const surface    = g.surface ? ` | ${g.surface}` : '';
+
+    // Turnier muss heute noch laufen
+    if (endDate < todayStr) return null;
+
+    // Zeige immer das heutige Datum (wir wissen nicht genau wann das Match ist)
+    const gameDate = todayStr;
+    const label    = `${tournament}${round}${surface} | bis ${endDate.slice(5).replace('-','.')}`;
+
     return {
       sport, pick, opponent: oppon, prob, oppProb: oppP,
       odds: estimateOdds(prob), hasRealOdds: false,
       game:      `${g.p1_name} vs ${g.p2_name}`,
       gameDate,
-      dateLabel: `${tournament}${round}${surface} (bis ${endDate})`,
+      dateLabel: label,
       sortKey:   gameDate + g.p1_name,
-      isToday:   gameDate === todayStr,
+      isToday:   true,
       league:    tournament,
     };
   }
