@@ -453,9 +453,18 @@ function parseGame(g, sport) {
       : confLevel === 'HIGH' ? 2
       : confLevel === 'MEDIUM' ? 1 : 0;
 
-    const gameDate = todayStr;
-    const roundStr = round ? ` ${round}` : '';
-    const label    = `${tournament}${roundStr}${surface} | bis ${endDate.slice(5).replace('-','.')}`;
+    // Datum direkt aus match_key extrahieren: wta#name-vs-name-2026-04-14
+    const matchKey   = g.match_key || '';
+    const dateMatch  = matchKey.match(/(\d{4}-\d{2}-\d{2})$/);
+    const matchDate  = dateMatch ? dateMatch[1] : todayStr;
+    const gameDate   = matchDate;
+
+    // Vergangene Matches ueberspringen
+    if (gameDate < todayStr) return null;
+
+    const roundStr  = round ? ` ${round}` : '';
+    const dd        = gameDate.slice(8,10) + '.' + gameDate.slice(5,7) + '.';
+    const label     = `${dd} | ${tournament}${roundStr}${surface}`;
 
     return {
       sport, pick, opponent: oppon, prob, oppProb: oppP,
@@ -465,7 +474,7 @@ function parseGame(g, sport) {
       gameDate,
       dateLabel: label,
       sortKey:   gameDate + String(3 - confidenceStar) + g.p1_name,
-      isToday:   true,
+      isToday:   gameDate === todayStr,
       league:    tournament,
     };
   }
