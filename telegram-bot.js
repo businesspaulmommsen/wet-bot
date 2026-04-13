@@ -35,8 +35,8 @@ const CONFIG = {
 const espnTournaments = {};
 
 // ── NBA ESPN Game Cache ───────────────────────
-// { 'team_a_abbr vs team_b_abbr': { dateLabel, dateStr } }
-const nbaEspnGames = {};
+const nbaEspnGames     = {};  // offene Spiele mit Uhrzeit
+const nbaCompletedKeys = new Set();  // abgeschlossene Spiele
 
 async function fetchNbaEspnGames() {
   try {
@@ -46,21 +46,28 @@ async function fetchNbaEspnGames() {
     );
     for (const k of Object.keys(nbaEspnGames)) delete nbaEspnGames[k];
     const events = r.data?.events || [];
+    nbaCompletedKeys.clear();
     for (const ev of events) {
       for (const comp of (ev.competitions || [])) {
-        // Ueberspringe abgeschlossene Spiele
         const completed = comp.status?.type?.completed || false;
         const state     = comp.status?.type?.state || '';
-        if (completed || state === 'post') continue;
-
         const teams = (comp.competitors || []).map(c => ({
           abbr: c.team?.abbreviation?.toLowerCase() || '',
           name: (c.team?.displayName || c.team?.name || '').toLowerCase(),
         }));
         if (teams.length < 2) continue;
+
+        if (completed || state === 'post') {
+          // Merke abgeschlossene Spiele
+          for (const a of teams) for (const b of teams) {
+            if (a.abbr !== b.abbr) nbaCompletedKeys.add(a.abbr + ' vs ' + b.abbr);
+          }
+          continue;
+        }
+
         const dateStr   = toLocalDate(comp.date || ev.date);
         const dateLabel = formatDate(comp.date || ev.date);
-        const info = { dateStr, dateLabel, completed: false };
+        const info = { dateStr, dateLabel };
         for (const a of teams) {
           for (const b of teams) {
             if (a.abbr === b.abbr) continue;
@@ -71,7 +78,7 @@ async function fetchNbaEspnGames() {
       }
     }
     const count = Object.keys(nbaEspnGames).length / 4 | 0;
-    console.log('  NBA ESPN: ' + count + ' offene Spiele geladen');
+    console.log('  NBA ESPN: ' + count + ' offene Spiele, ' + (nbaCompletedKeys.size/2|0) + ' abgeschlossen');
   } catch(e) {
     console.log('  NBA ESPN Fehler:', e.message);
   }
@@ -302,8 +309,10 @@ function parseGame(g, sport) {
       }
     }
 
-    // Heutiges Spiel aber nicht in ESPN = bereits gespielt -> ueberspringen
-    if (g.game_date === todayStr && !espnNBA) return null;
+    // Nur ueberspringen wenn ESPN das Spiel explizit als abgeschlossen markiert hat
+    const compKeyAB = abbrA + ' vs ' + abbrB;
+    const compKeyBA = abbrB + ' vs ' + abbrA;
+    if (nbaCompletedKeys.has(compKeyAB) || nbaCompletedKeys.has(compKeyBA)) return null;
 
     const dd        = g.game_date ? g.game_date.slice(8,10) + '.' + g.game_date.slice(5,7) + '.' : '';
     const dateLabel = espnNBA ? espnNBA.dateLabel : (dd + ' (NBA ~02-05 Uhr MEZ)');
