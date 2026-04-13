@@ -34,6 +34,44 @@ const CONFIG = {
 // ── ESPN Turnier-Cache ────────────────────────
 const espnTournaments = {};
 
+// ── NBA ESPN Game Cache ───────────────────────
+// { 'team_a_abbr vs team_b_abbr': { dateLabel, dateStr } }
+const nbaEspnGames = {};
+
+async function fetchNbaEspnGames() {
+  try {
+    const r = await axios.get(
+      'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+      { timeout: 6000 }
+    );
+    for (const k of Object.keys(nbaEspnGames)) delete nbaEspnGames[k];
+    const events = r.data?.events || [];
+    for (const ev of events) {
+      for (const comp of (ev.competitions || [])) {
+        const teams = (comp.competitors || []).map(c => ({
+          abbr: c.team?.abbreviation?.toLowerCase() || '',
+          name: (c.team?.displayName || c.team?.name || '').toLowerCase(),
+        }));
+        if (teams.length < 2) continue;
+        const dateStr   = toLocalDate(comp.date || ev.date);
+        const dateLabel = formatDate(comp.date || ev.date);
+        const info = { dateStr, dateLabel };
+        // Store all combinations
+        for (const a of teams) {
+          for (const b of teams) {
+            if (a.abbr === b.abbr) continue;
+            nbaEspnGames[a.abbr + ' vs ' + b.abbr] = info;
+            nbaEspnGames[a.name + ' vs ' + b.name] = info;
+          }
+        }
+      }
+    }
+    console.log('  NBA ESPN: ' + (Object.keys(nbaEspnGames).length/4|0) + ' Spiele geladen');
+  } catch(e) {
+    console.log('  NBA ESPN Fehler:', e.message);
+  }
+}
+
 // ── UFC ESPN Fight Cache ───────────────────────
 // { 'fighter a vs fighter b': { date, dateStr, dateLabel } }
 const ufcEspnFights = {};
@@ -245,6 +283,17 @@ function parseGame(g, sport) {
     const injuryFactor = Math.max(0.85, 1 - pickInjuries * 0.025 + oppInjuries * 0.015);
     const finalProb    = Math.min(0.97, adjProb * injuryFactor);
     if (finalProb < CONFIG.minProbability) return null;
+    // ESPN fuer echte Uhrzeit
+    const abbrA   = (g.team_a_abbr||'').toLowerCase();
+    const abbrB   = (g.team_b_abbr||'').toLowerCase();
+    const nameA   = pick.toLowerCase();
+    const nameB   = opponent.toLowerCase();
+    const espnNBA = nbaEspnGames[abbrA+' vs '+abbrB] ||
+                    nbaEspnGames[abbrB+' vs '+abbrA] ||
+                    nbaEspnGames[nameA+' vs '+nameB] ||
+                    nbaEspnGames[nameB+' vs '+nameA];
+    const dateLabel = espnNBA ? espnNBA.dateLabel : g.game_date + ' (NBA, USA Abend)';
+
     return {
       sport, pick, opponent,
       prob: finalProb, rawProb: prob, oppProb, odds,
@@ -252,7 +301,7 @@ function parseGame(g, sport) {
       hasRealOdds: !!(realOdds && realOdds > 1),
       game:      g.event_name || `${g.team_a_name} vs ${g.team_b_name}`,
       gameDate:  g.game_date,
-      dateLabel: g.game_date + ' (NBA ~21-04 Uhr MEZ)',
+      dateLabel,
       sortKey:   g.game_date,
       isToday:   g.game_date === todayStr,
       league:    'NBA',
@@ -536,6 +585,7 @@ async function runScan(notify = true) {
   console.log(`=== Scan ${nowStr()} ===`);
   const allPreds = [];
   await fetchEspnTournaments();
+  await fetchNbaEspnGames();
   await fetchUfcEspnFights();
   await fetchUfcBestOdds();
   for (const sport of CONFIG.sports) {
