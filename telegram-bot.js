@@ -438,10 +438,15 @@ function parseGame(g, sport) {
     // Turnier muss heute noch laufen
     if (endDate < todayStr) return null;
 
-    // Nur Spiele mit genuegend Confidence anzeigen (wie Oddify Website)
-    const confLevel = (g.confidence_level || '').toUpperCase();
+    // Filter 1: Nur HIGH/VERY HIGH confidence (wie Oddify Website)
+    const confLevel = (g.confidence_level || '').toUpperCase().replace(' ', '_');
     const confVal   = g.confidence || 0;
-    if (confLevel === 'LOW' || confVal < 0.55) return null;
+    if (!['HIGH', 'VERY_HIGH'].includes(confLevel)) return null;
+
+    // Filter 2: Nur Prognosen die in den letzten 48h aktualisiert wurden
+    const updatedAt = g.updated_at ? new Date(g.updated_at) : null;
+    const cutoff    = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    if (!updatedAt || updatedAt < cutoff) return null;
 
     // Sterne basieren auf confidence_level statt Edge
     const confidenceStar = confLevel === 'VERY_HIGH' ? 3
