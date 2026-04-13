@@ -605,8 +605,7 @@ async function sendAlert(bets) {
     const star  = b.edge > 0.05 ? '\u2605' : '\u25cb';
     const real  = b.hasRealOdds ? '' : '~';
     const book  = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
-    const whereAlert = b.sport === 'ufc' && b.bestBookmaker
-      ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*` : '';
+    const whereAlert = b.sport === 'ufc' ? (b.bestBookmaker ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*` : `\n\u{1F4CD} Wetten bei: Unibet, Bet365 oder Betway`) : '';
     msg += `${star} *${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league}\n${(b.prob*100).toFixed(0)}% | ${real}${b.odds.toFixed(2)}${book} | Edge ${eSign}${(b.edge*100).toFixed(1)}% | *\u20ac${b.bet.toFixed(2)}*${whereAlert}\n\n`;
   }
   await send(msg.trim());
@@ -638,7 +637,12 @@ function formatBets(bets, title) {
       const warn = b.edge < 0 ? '\u26a0\ufe0f ' : b.edge > 0.05 ? '\u2605 ' : '\u25cb ';
       const real = b.hasRealOdds ? '' : '~';
       const book = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
-      out += `${warn}*${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league} | ${real}${b.odds.toFixed(2)}${book} | ${e} | *\u20ac${b.bet.toFixed(2)}*\n\n`;
+      const whereStr = b.sport === 'ufc'
+        ? (b.bestBookmaker
+          ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*`
+          : `\n\u{1F4CD} Wetten bei: Unibet, Bet365 oder Betway`)
+        : '';
+      out += `${warn}*${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league} | ${real}${b.odds.toFixed(2)}${book} | ${e} | *\u20ac${b.bet.toFixed(2)}*${whereStr}\n\n`;
     }
   }
   return out.trim();
