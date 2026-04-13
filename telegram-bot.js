@@ -463,7 +463,7 @@ function parseGame(g, sport) {
     if (normalize(g.p1_name) === normalize(g.p2_name)) return null;
 
     // Sterne basieren auf confidence_level statt Edge
-    const confidenceStar = confLevel === 'VERY_HIGH' ? 3
+    const confidenceStar = confLevel === 'VERY_HIGH' || confLevel === 'VERY HIGH' ? 3
       : confLevel === 'HIGH' ? 2
       : confLevel === 'MEDIUM' ? 1 : 0;
 
