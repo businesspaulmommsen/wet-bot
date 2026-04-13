@@ -34,6 +34,47 @@ const CONFIG = {
 // ── ESPN Turnier-Cache ────────────────────────
 const espnTournaments = {};
 
+// ── UFC ESPN Fight Cache ───────────────────────
+// { 'fighter a vs fighter b': { date, dateStr, dateLabel } }
+const ufcEspnFights = {};
+
+async function fetchUfcEspnFights() {
+  try {
+    const r = await axios.get(
+      'https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard',
+      { timeout: 6000 }
+    );
+    const events = r.data?.events || [];
+    // Clear old fights
+    for (const k of Object.keys(ufcEspnFights)) delete ufcEspnFights[k];
+    for (const ev of events) {
+      for (const comp of (ev.competitions || [])) {
+        const fighters = (comp.competitors || [])
+          .map(f => f.athlete?.displayName || f.team?.displayName || '')
+          .filter(Boolean);
+        if (fighters.length < 2) continue;
+        const dateStr   = toLocalDate(comp.date || ev.date);
+        const dateLabel = formatDate(comp.date || ev.date);
+        // Store under both name orderings for matching
+        const key1 = fighters[0].toLowerCase() + ' vs ' + fighters[1].toLowerCase();
+        const key2 = fighters[1].toLowerCase() + ' vs ' + fighters[0].toLowerCase();
+        const info = { dateStr, dateLabel, eventName: ev.name, fighters };
+        ufcEspnFights[key1] = info;
+        ufcEspnFights[key2] = info;
+        // Also store last names only for fuzzy matching
+        const last1 = fighters[0].split(' ').pop().toLowerCase();
+        const last2 = fighters[1].split(' ').pop().toLowerCase();
+        ufcEspnFights[last1 + ' vs ' + last2] = info;
+        ufcEspnFights[last2 + ' vs ' + last1] = info;
+      }
+    }
+    const total = Object.keys(ufcEspnFights).length / 4; // divided by 4 orderings
+    console.log(`  UFC ESPN: ${Math.round(total)} Kaempfe geladen (${events[0]?.name || ''})`);
+  } catch(e) {
+    console.log('  UFC ESPN Fehler:', e.message);
+  }
+}
+
 async function fetchEspnTournaments() {
   const map = { tennis_atp: 'atp', tennis_wta: 'wta' };
   for (const [sport, league] of Object.entries(map)) {
@@ -222,16 +263,32 @@ function parseGame(g, sport) {
     const bestOdds  = ufcOdds[selection];
     const odds      = bestOdds ? bestOdds.price : estimateOdds(finalProb);
 
+    // Match against ESPN to get real date/time and filter old fights
+    const gameKey  = `${g.fighter_a_name} vs ${g.fighter_b_name}`.toLowerCase();
+    const lastA    = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
+    const lastB    = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
+    const espnInfo = ufcEspnFights[gameKey] ||
+                     ufcEspnFights[`${g.fighter_b_name} vs ${g.fighter_a_name}`.toLowerCase()] ||
+                     ufcEspnFights[`${lastA} vs ${lastB}`] ||
+                     ufcEspnFights[`${lastB} vs ${lastA}`];
+
+    // If ESPN doesn't know this fight, skip it (old/wrong data)
+    if (!espnInfo) return null;
+
+    // Check date is within daysAhead
+    const fightDate = new Date(espnInfo.dateStr + 'T12:00:00');
+    if (fightDate < today || fightDate >= maxDate) return null;
+
     return {
       sport, pick, opponent: oppon,
       prob: finalProb, rawProb: prob, oppProb: oppP, odds,
       confidence, hasRealOdds: !!bestOdds,
       bestBookmaker: bestOdds ? bestOdds.bookmaker : null,
       game:      `${g.fighter_a_name} vs ${g.fighter_b_name}`,
-      gameDate:  todayStr,
-      dateLabel: `UFC | ${todayStr}`,
-      sortKey:   g.updated_at || todayStr,
-      isToday:   true,
+      gameDate:  espnInfo.dateStr,
+      dateLabel: `${espnInfo.dateLabel} | ${espnInfo.eventName}`,
+      sortKey:   espnInfo.dateStr + (g.fighter_a_name||''),
+      isToday:   espnInfo.dateStr === todayStr,
       league:    'UFC',
     };
   }
@@ -443,6 +500,7 @@ async function runScan(notify = true) {
   console.log(`=== Scan ${nowStr()} ===`);
   const allPreds = [];
   await fetchEspnTournaments();
+  await fetchUfcEspnFights();
   await fetchUfcBestOdds();
   for (const sport of CONFIG.sports) {
     const preds = await fetchPredictions(sport);
