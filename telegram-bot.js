@@ -231,6 +231,17 @@ function normalize(str) {
     .replace(/[^a-z]/g, '');
 }
 
+function sportName(sport) {
+  const map = {
+    'tennis_atp': 'Tennis Männer',
+    'tennis_wta': 'Tennis Frauen',
+    'nba': 'NBA',
+    'soccer': 'Soccer',
+    'ufc': 'UFC',
+  };
+  return map[sport] || sport.toUpperCase();
+}
+
 function formatDate(dateStr) {
   try {
     const d = new Date(dateStr);
@@ -476,9 +487,10 @@ function parseGame(g, sport) {
       game:      `${g.p1_name} vs ${g.p2_name}`,
       gameDate,
       dateLabel: label,
-      sortKey:   gameDate + String(3 - confidenceStar) + g.p1_name,
+      sortKey:   gameDate + '_' + String(3 - confidenceStar) + '_' + (g.p1_name||''),
       isToday:   gameDate === todayStr,
       league:    tournament,
+      sportDisplay: sportName(sport),
     };
   }
 
@@ -907,8 +919,8 @@ bot.on('message', async msg => {
       '/nba — alle NBA Spiele\n' +
       '/soccer — alle Soccer Spiele\n' +
       '/ufc — alle UFC Kaempfe\n' +
-      '/tennis\\_atp — ATP Tennis\n' +
-      '/tennis\\_wta — WTA Tennis\n\n' +
+      '/tennis\\_atp — Tennis Männer\n' +
+      '/tennis\\_wta — Tennis Frauen\n\n' +
       '*Budget-Modus:*\n' +
       '/nba 50 — NBA heute mit \u20ac50 aufteilen\n' +
       '/soccer 30 — Soccer heute mit \u20ac30\n' +
@@ -917,8 +929,8 @@ bot.on('message', async msg => {
       '/nba 50+ — nur Spiele mit positivem EV\n' +
       '/heute 50+ — alle Sportarten, nur pos. EV\n\n' +
       '*Wetten tracken:*\n' +
-      '/gesetzt nba 50 — NBA Wetten mit \u20ac50 speichern\n' +
-      '/gesetzt heute 30 — alle heutigen Wetten speichern\n' +
+      '/gesetzt nba 50 — NBA Wetten tracken\n' +
+      '/gesetzt heute 30 — alle heutigen Wetten tracken\n' +
       '/stats — Statistik: Trefferquote, ROI, Gewinn\n\n' +
       '*Einstellungen:*\n' +
       '/bankroll 80 — Bankroll auf \u20ac80 setzen\n' +
@@ -937,7 +949,7 @@ bot.on('message', async msg => {
 
   if (['/status', 'status'].includes(text)) {
     const total  = lastBets.reduce((s,b)=>s+b.bet,0);
-    const sports = [...new Set(lastBets.map(b=>b.sport))].join(', ') || '-';
+    const sports = [...new Set(lastBets.map(b=>b.sport))].map(sportName).join(', ') || '-';
     return send(`*Status*\n_${nowStr()}_\nLetzter Scan: ${lastScanTime||'-'}\nSportarten: ${sports}\nSpiele: ${lastBets.length}\nEinsatz: \u20ac${total.toFixed(2)}\nBankroll: \u20ac${CONFIG.bankroll}\nTage voraus: ${CONFIG.daysAhead}`, chatId);
   }
 
@@ -975,6 +987,10 @@ bot.on('message', async msg => {
   }
 
   // Budget+ Modus: /nba 50+
+  // /tennis oder /tennis-maenner als Alias
+  if (text === '/tennis' || text === 'tennis') {
+    return send(formatBets(lastBets.filter(b=>b.sport==='tennis_atp'||b.sport==='tennis_wta'), 'Tennis'), chatId);
+  }
   const budgetPlusMatch = text.match(/^\/?(nba|soccer|tennis_atp|tennis_wta|ufc|heute|live)\s+(\d+(?:[.,]\d+)?)\+$/);
   if (budgetPlusMatch) {
     const sportArg  = budgetPlusMatch[1];
@@ -1079,7 +1095,7 @@ bot.on('message', async msg => {
 
   // Sportart
   const sportKey = CONFIG.sports.find(s => text===`/${s}` || text===s);
-  if (sportKey) return send(formatBets(lastBets.filter(b=>b.sport===sportKey), sportKey.toUpperCase()), chatId);
+  if (sportKey) return send(formatBets(lastBets.filter(b=>b.sport===sportKey), sportName(sportKey)), chatId);
 
   // Bankroll
   if (text.includes('bankroll')) {
