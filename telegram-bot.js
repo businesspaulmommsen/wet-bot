@@ -106,6 +106,16 @@ async function fetchEspnTournaments() {
 // ── UFC beste Quoten Cache ────────────────────
 const ufcBestOdds = {};
 
+// EU-verfuegbare Buchmacher (kein US-only)
+const EU_BOOKMAKERS = new Set([
+  'unibet', 'unibet_nl', 'unibet_se', 'unibet_uk', 'unibet_fr',
+  'bet365', 'betway', 'williamhill', 'betfair_ex_eu', 'betfair_ex_uk',
+  'betfair_sb_uk', 'paddypower', 'betsson', 'nordicbet', 'coolbet',
+  'leovegas', 'leovegas_se', 'marathonbet', 'matchbook', 'pinnacle',
+  'onexbet', 'betclic_fr', 'grosvenor', 'livescorebet', 'virginbet',
+  'sport888', 'betmgm', 'draftkings', 'caesars',
+]);
+
 async function fetchUfcBestOdds() {
   if (!await ensureOddifyToken()) return;
   try {
@@ -115,6 +125,8 @@ async function fetchUfcBestOdds() {
     );
     const data = r.data || [];
     data.forEach(o => {
+      // Nur EU-verfuegbare Buchmacher
+      if (!EU_BOOKMAKERS.has(o.bookmaker)) return;
       const key = o.fight_key;
       const sel = o.selection;
       if (!ufcBestOdds[key]) ufcBestOdds[key] = {};
@@ -232,6 +244,8 @@ function parseGame(g, sport) {
   if (g.fighter_a_name && g.fighter_b_name) {
     const aProb = g.fighter_a_win_prob || 0;
     const bProb = g.fighter_b_win_prob || 0;
+    // fighter_a = blue corner, fighter_b = red corner in odds_history
+    // Pick = der Favorit laut AI
     const aWins = aProb >= bProb;
     const pick  = aWins ? g.fighter_a_name : g.fighter_b_name;
     const oppon = aWins ? g.fighter_b_name : g.fighter_a_name;
@@ -243,30 +257,22 @@ function parseGame(g, sport) {
     const finalProb  = Math.min(0.97, adjProb);
     if (finalProb < CONFIG.minProbability) return null;
 
-    // Beste Quote: erst fight_key, dann Namens-Matching
-    const fightKey = g.fight_key || '';
-    let ufcOdds    = ufcBestOdds[fightKey] || {};
-    if (!ufcOdds.blue && !ufcOdds.red) {
-      const fa = (g.fighter_a_name || '').toLowerCase().replace(/[^a-z]/g, '');
-      const fb = (g.fighter_b_name || '').toLowerCase().replace(/[^a-z]/g, '');
-      for (const key of Object.keys(ufcBestOdds)) {
-        const kn = key.toLowerCase().replace(/[^a-z]/g, '');
-        if (fa.length >= 4 && fb.length >= 4 &&
-            kn.includes(fa.slice(0,5)) && kn.includes(fb.slice(0,5))) {
-          ufcOdds = ufcBestOdds[key];
-          break;
-        }
+    // Beste Quote aus EU-Buchis via Nachnamen-Matching
+    let bestOdds = null;
+    for (const [key, oddsObj] of Object.entries(ufcBestOdds)) {
+      const kn = key.toLowerCase();
+      if (kn.includes(lastA) && kn.includes(lastB)) {
+        // blue = fighter_a, red = fighter_b
+        const sel = aWins ? 'blue' : 'red';
+        if (oddsObj[sel]) { bestOdds = oddsObj[sel]; break; }
       }
     }
-    const selection = aWins ? 'blue' : 'red';
-    const bestOdds  = ufcOdds[selection];
-    const odds      = bestOdds ? bestOdds.price : estimateOdds(finalProb);
+    const odds = bestOdds ? bestOdds.price : estimateOdds(finalProb);
 
     // Match against ESPN to get real date/time and filter old fights
+    // Search ESPN fights by last name matching
     const lastA = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
     const lastB = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
-
-    // Search ESPN fights by last name matching
     let espnInfo = null;
     for (const [key, info] of Object.entries(ufcEspnFights)) {
       const kparts = key.replace(' vs ', ' ').split(' ');
@@ -733,7 +739,45 @@ bot.on('message', async msg => {
   }
 
   if (['/hilfe', 'hilfe', '?', '/help'].includes(text)) {
-    return send('*Befehle:*\n\n*Anzeige:*\n/wetten /heute /morgen\n/top3 /edge\n/nba /soccer /ufc /tennis\\_atp\n\n*Budget:*\n/nba 50 - alle Spiele\n/nba 50+ - nur pos. EV\n/heute 30 - alle Sportarten\n\n*Tracking:*\n/gesetzt nba 50\n/stats\n\n*Steuerung:*\n/scan /reset /status\n/bankroll 80 /tage 5\n\nTeamname: z.B. _lakers_', chatId);
+    return send(
+      '*Alle Befehle:*\n\n' +
+      '*Uebersicht:*\n' +
+      '/wetten — alle Spiele (alle Sportarten)\n' +
+      '/heute — nur heutige Spiele\n' +
+      '/morgen — nur morgige Spiele\n' +
+      '/top3 — Top 3 nach Edge\n' +
+      '/top5 — Top 5 nach Edge\n' +
+      '/edge — alle Spiele nach Edge sortiert\n\n' +
+      '*Sportarten:*\n' +
+      '/nba — alle NBA Spiele\n' +
+      '/soccer — alle Soccer Spiele\n' +
+      '/ufc — alle UFC Kaempfe\n' +
+      '/tennis\\_atp — ATP Tennis\n' +
+      '/tennis\\_wta — WTA Tennis\n\n' +
+      '*Budget-Modus:*\n' +
+      '/nba 50 — NBA heute mit \u20ac50 aufteilen\n' +
+      '/soccer 30 — Soccer heute mit \u20ac30\n' +
+      '/ufc 20 — UFC heute mit \u20ac20\n' +
+      '/heute 50 — alle Sportarten mit \u20ac50\n' +
+      '/nba 50+ — nur Spiele mit positivem EV\n' +
+      '/heute 50+ — alle Sportarten, nur pos. EV\n\n' +
+      '*Wetten tracken:*\n' +
+      '/gesetzt nba 50 — NBA Wetten mit \u20ac50 speichern\n' +
+      '/gesetzt heute 30 — alle heutigen Wetten speichern\n' +
+      '/stats — Statistik: Trefferquote, ROI, Gewinn\n\n' +
+      '*Einstellungen:*\n' +
+      '/bankroll 80 — Bankroll auf \u20ac80 setzen\n' +
+      '/tage 5 — Spiele bis zu 5 Tage im Voraus\n' +
+      '/scan — sofort neu scannen\n' +
+      '/reset — alle Alerts zuruecksetzen\n' +
+      '/status — Bot-Status anzeigen\n\n' +
+      '*Suche:*\n' +
+      'Teamname tippen: z.B. _lakers_ oder _burns_\n\n' +
+      '*Automatisch (kein Befehl):*\n' +
+      '\u{1F7E2} Live-Alert wenn Tipico online geht\n' +
+      '\u26a1 Value-Alert bei Quote \u22651.6 + positivem Edge',
+      chatId
+    );
   }
 
   if (['/status', 'status'].includes(text)) {
