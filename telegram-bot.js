@@ -432,23 +432,34 @@ function parseGame(g, sport) {
     const tournInfo  = espnTournaments[sport] || {};
     const endDate    = tournInfo.endStr || todayStr;
     const tournament = g.tournament || tournInfo.name || sport.toUpperCase();
-    const round      = g.round ? ` ${g.round}` : '';
+    const round      = g.round || '';
     const surface    = g.surface ? ` | ${g.surface}` : '';
 
     // Turnier muss heute noch laufen
     if (endDate < todayStr) return null;
 
-    // Zeige immer das heutige Datum (wir wissen nicht genau wann das Match ist)
+    // Nur Spiele mit genuegend Confidence anzeigen (wie Oddify Website)
+    const confLevel = (g.confidence_level || '').toUpperCase();
+    const confVal   = g.confidence || 0;
+    if (confLevel === 'LOW' || confVal < 0.55) return null;
+
+    // Sterne basieren auf confidence_level statt Edge
+    const confidenceStar = confLevel === 'VERY_HIGH' ? 3
+      : confLevel === 'HIGH' ? 2
+      : confLevel === 'MEDIUM' ? 1 : 0;
+
     const gameDate = todayStr;
-    const label    = `${tournament}${round}${surface} | bis ${endDate.slice(5).replace('-','.')}`;
+    const roundStr = round ? ` ${round}` : '';
+    const label    = `${tournament}${roundStr}${surface} | bis ${endDate.slice(5).replace('-','.')}`;
 
     return {
       sport, pick, opponent: oppon, prob, oppProb: oppP,
       odds: estimateOdds(prob), hasRealOdds: false,
+      confidenceStar,
       game:      `${g.p1_name} vs ${g.p2_name}`,
       gameDate,
       dateLabel: label,
-      sortKey:   gameDate + g.p1_name,
+      sortKey:   gameDate + String(3 - confidenceStar) + g.p1_name,
       isToday:   true,
       league:    tournament,
     };
@@ -707,7 +718,9 @@ function formatBets(bets, title) {
     out += `\`--- ${dayLabel} ${dd} ---\`\n`;
     for (const b of group) {
       const e    = b.edge >= 0 ? `+${(b.edge*100).toFixed(1)}%` : `${(b.edge*100).toFixed(1)}%`;
-      const warn = b.edge < 0 ? '\u26a0\ufe0f ' : b.edge > 0.05 ? '\u2605 ' : '\u25cb ';
+      const warn = b.sport === 'tennis_atp' || b.sport === 'tennis_wta'
+        ? (b.confidenceStar >= 3 ? '\u2605\u2605\u2605 ' : b.confidenceStar >= 2 ? '\u2605\u2605 ' : b.confidenceStar >= 1 ? '\u2605 ' : '\u25cb ')
+        : (b.edge < 0 ? '\u26a0\ufe0f ' : b.edge > 0.05 ? '\u2605 ' : '\u25cb ');
       const real = b.hasRealOdds ? '' : '~';
       const book = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
       const whereStr = b.sport === 'ufc'
