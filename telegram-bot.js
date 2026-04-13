@@ -301,16 +301,8 @@ function parseGame(g, sport) {
       if (matchA && matchB) { espnInfo = info; break; }
     }
 
-    // Kein ESPN Match: nutze naechstes bekanntes UFC Event-Datum als Fallback
-    if (!espnInfo) {
-      const ufcDates = Object.values(ufcEspnFights).map(i => i.dateStr).filter(Boolean);
-      if (ufcDates.length > 0) {
-        const nextDate = ufcDates.sort()[0];
-        espnInfo = { dateStr: nextDate, dateLabel: formatDate(nextDate + 'T21:00:00'), eventName: 'UFC' };
-      } else {
-        return null; // Kein UFC Event bekannt
-      }
-    }
+    // Kein ESPN Match = Kampf gehoert nicht zum naechsten Event -> ueberspringen
+    if (!espnInfo) return null;
 
     // UFC: zeige alle zukuenftigen Kaempfe egal wie weit entfernt
     const fightDate = new Date(espnInfo.dateStr + 'T12:00:00');
@@ -613,7 +605,9 @@ async function sendAlert(bets) {
     const star  = b.edge > 0.05 ? '\u2605' : '\u25cb';
     const real  = b.hasRealOdds ? '' : '~';
     const book  = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
-    msg += `${star} *${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league}\n${(b.prob*100).toFixed(0)}% | ${real}${b.odds.toFixed(2)}${book} | Edge ${eSign}${(b.edge*100).toFixed(1)}% | *\u20ac${b.bet.toFixed(2)}*\n\n`;
+    const whereAlert = b.sport === 'ufc' && b.bestBookmaker
+      ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*` : '';
+    msg += `${star} *${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league}\n${(b.prob*100).toFixed(0)}% | ${real}${b.odds.toFixed(2)}${book} | Edge ${eSign}${(b.edge*100).toFixed(1)}% | *\u20ac${b.bet.toFixed(2)}*${whereAlert}\n\n`;
   }
   await send(msg.trim());
 }
@@ -751,13 +745,15 @@ function formatBudgetMsg(sportArg, budget, allocated, label) {
     const real    = b.hasRealOdds?'':'~';
     const book    = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
     const profit  = +(b.bet*(b.odds-1)).toFixed(2);
+    const whereBudget = b.sport === 'ufc' && b.bestBookmaker
+      ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*` : '';
     const confStr = b.confidence ? ` | Conf: ${(b.confidence*100).toFixed(0)}%` : '';
     const injStr  = (b.pickInjuries > 0 || b.oppInjuries > 0) ? ` | \u{1FA79} ${b.pickInjuries||0}/${b.oppInjuries||0}` : '';
     const rawStr  = b.rawProb && Math.abs(b.rawProb-b.prob) > 0.01 ? ` (roh: ${(b.rawProb*100).toFixed(0)}%)` : '';
     msg += `${star}*${b.pick}* vs ${b.opponent}\n`;
     msg += `_${b.dateLabel}_\n`;
     msg += `AI: ${(b.prob*100).toFixed(0)}%${rawStr} | Buch: ${(1/b.odds*100).toFixed(0)}% | Edge ${eSign}${(b.edge*100).toFixed(1)}%${confStr}${injStr}\n`;
-    msg += `Quote: ${real}${b.odds.toFixed(2)}${book} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}\n\n`;
+    msg += `Quote: ${real}${b.odds.toFixed(2)}${book} | *\u20ac${b.bet.toFixed(2)}* | +\u20ac${profit}${whereBudget}\n\n`;
   }
   return msg.trim();
 }
