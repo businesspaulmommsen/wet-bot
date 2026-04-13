@@ -58,12 +58,11 @@ async function fetchUfcEspnFights() {
         // Store under both name orderings for matching
         const key1 = fighters[0].toLowerCase() + ' vs ' + fighters[1].toLowerCase();
         const key2 = fighters[1].toLowerCase() + ' vs ' + fighters[0].toLowerCase();
-        const info = { dateStr, dateLabel, eventName: ev.name, fighters };
-        ufcEspnFights[key1] = info;
-        ufcEspnFights[key2] = info;
-        // Also store last names only for fuzzy matching
         const last1 = fighters[0].split(' ').pop().toLowerCase();
         const last2 = fighters[1].split(' ').pop().toLowerCase();
+        const info  = { dateStr, dateLabel, eventName: ev.name, fighters, last1, last2 };
+        ufcEspnFights[key1] = info;
+        ufcEspnFights[key2] = info;
         ufcEspnFights[last1 + ' vs ' + last2] = info;
         ufcEspnFights[last2 + ' vs ' + last1] = info;
       }
@@ -264,13 +263,18 @@ function parseGame(g, sport) {
     const odds      = bestOdds ? bestOdds.price : estimateOdds(finalProb);
 
     // Match against ESPN to get real date/time and filter old fights
-    const gameKey  = `${g.fighter_a_name} vs ${g.fighter_b_name}`.toLowerCase();
-    const lastA    = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
-    const lastB    = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
-    const espnInfo = ufcEspnFights[gameKey] ||
-                     ufcEspnFights[`${g.fighter_b_name} vs ${g.fighter_a_name}`.toLowerCase()] ||
-                     ufcEspnFights[`${lastA} vs ${lastB}`] ||
-                     ufcEspnFights[`${lastB} vs ${lastA}`];
+    const lastA = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
+    const lastB = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
+
+    // Search ESPN fights by last name matching
+    let espnInfo = null;
+    for (const [key, info] of Object.entries(ufcEspnFights)) {
+      const kparts = key.replace(' vs ', ' ').split(' ');
+      if (kparts.some(p => p === lastA) && kparts.some(p => p === lastB)) {
+        espnInfo = info;
+        break;
+      }
+    }
 
     // If ESPN doesn't know this fight, skip it (old/wrong data)
     if (!espnInfo) return null;
