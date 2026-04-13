@@ -438,7 +438,7 @@ function parseGame(g, sport) {
     // Turnier muss heute noch laufen
     if (endDate < todayStr) return null;
 
-    // Filter 1: Nur HIGH/VERY HIGH confidence (wie Oddify Website)
+    // Filter 1: Nur HIGH/VERY HIGH confidence
     const confLevel = (g.confidence_level || '').toUpperCase().replace(' ', '_');
     const confVal   = g.confidence || 0;
     if (!['HIGH', 'VERY_HIGH'].includes(confLevel)) return null;
@@ -447,6 +447,9 @@ function parseGame(g, sport) {
     const updatedAt = g.updated_at ? new Date(g.updated_at) : null;
     const cutoff    = new Date(Date.now() - 48 * 60 * 60 * 1000);
     if (!updatedAt || updatedAt < cutoff) return null;
+
+    // Filter 3: Kein Match gegen sich selbst (Datenfehler)
+    if (normalize(g.p1_name) === normalize(g.p2_name)) return null;
 
     // Sterne basieren auf confidence_level statt Edge
     const confidenceStar = confLevel === 'VERY_HIGH' ? 3
@@ -501,7 +504,22 @@ async function fetchPredictions(sport) {
         timeout: 12000,
       }
     );
-    const items = Array.isArray(res.data) ? res.data : [];
+    let items = Array.isArray(res.data) ? res.data : [];
+
+    // Fuer Tennis: nur die aktuellste Prognose pro Spielerpaar behalten
+    if (sport.startsWith('tennis')) {
+      const seen = {};
+      items = items
+        .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
+        .filter(g => {
+          if (!g.p1_name || !g.p2_name) return false;
+          const key = [normalize(g.p1_name), normalize(g.p2_name)].sort().join('_');
+          if (seen[key]) return false;
+          seen[key] = true;
+          return true;
+        });
+    }
+
     const result = items.map(g => parseGame(g, sport)).filter(Boolean);
     result.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
     return result;
