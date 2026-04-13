@@ -60,11 +60,15 @@ async function fetchUfcEspnFights() {
         const key2 = fighters[1].toLowerCase() + ' vs ' + fighters[0].toLowerCase();
         const last1 = fighters[0].split(' ').pop().toLowerCase();
         const last2 = fighters[1].split(' ').pop().toLowerCase();
-        const info  = { dateStr, dateLabel, eventName: ev.name, fighters, last1, last2 };
+        const norm1 = normalize(fighters[0].split(' ').pop());
+        const norm2 = normalize(fighters[1].split(' ').pop());
+        const info  = { dateStr, dateLabel, eventName: ev.name, fighters };
         ufcEspnFights[key1] = info;
         ufcEspnFights[key2] = info;
         ufcEspnFights[last1 + ' vs ' + last2] = info;
         ufcEspnFights[last2 + ' vs ' + last1] = info;
+        ufcEspnFights[norm1 + ' vs ' + norm2] = info;
+        ufcEspnFights[norm2 + ' vs ' + norm1] = info;
       }
     }
     const total = Object.keys(ufcEspnFights).length / 4; // divided by 4 orderings
@@ -168,6 +172,13 @@ function nowStr() {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin'
   });
+}
+
+function normalize(str) {
+  // Entfernt Akzente und Sonderzeichen fuer Namens-Matching
+  return (str||'').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z]/g, '');
 }
 
 function formatDate(dateStr) {
@@ -278,21 +289,16 @@ function parseGame(g, sport) {
     const odds = bestOdds ? bestOdds.price : estimateOdds(finalProb);
 
     // Match against ESPN to get real date/time and filter old fights
-    // Match gegen ESPN fuer echtes Datum
-    const lastA = (g.fighter_a_name||'').split(' ').pop().toLowerCase();
-    const lastB = (g.fighter_b_name||'').split(' ').pop().toLowerCase();
+    // Match gegen ESPN fuer echtes Datum (normalisiert fuer Akzente)
+    const normA = normalize((g.fighter_a_name||'').split(' ').pop());
+    const normB = normalize((g.fighter_b_name||'').split(' ').pop());
     let espnInfo = null;
 
-    // Versuche Matching mit Nachnamen
     for (const [key, info] of Object.entries(ufcEspnFights)) {
-      const kn = key.toLowerCase();
-      if (kn.includes(lastA) || kn.includes(lastB)) {
-        // Mindestens ein Name muss matchen, dann pruefen ob beide da
-        const kparts = kn.replace(' vs ', ' ').split(' ');
-        const matchA = kparts.some(p => p.includes(lastA.slice(0,4)));
-        const matchB = kparts.some(p => p.includes(lastB.slice(0,4)));
-        if (matchA && matchB) { espnInfo = info; break; }
-      }
+      const kn = normalize(key.replace(' vs ', ' '));
+      const matchA = kn.includes(normA.slice(0,4));
+      const matchB = kn.includes(normB.slice(0,4));
+      if (matchA && matchB) { espnInfo = info; break; }
     }
 
     // Kein ESPN Match: nutze naechstes bekanntes UFC Event-Datum als Fallback
@@ -306,9 +312,9 @@ function parseGame(g, sport) {
       }
     }
 
-    // Check date is within daysAhead
+    // UFC: zeige alle zukuenftigen Kaempfe egal wie weit entfernt
     const fightDate = new Date(espnInfo.dateStr + 'T12:00:00');
-    if (fightDate < today || fightDate >= maxDate) return null;
+    if (fightDate < today) return null;
 
     return {
       sport, pick, opponent: oppon,
