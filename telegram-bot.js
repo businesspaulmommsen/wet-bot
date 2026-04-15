@@ -29,6 +29,7 @@ const CONFIG = {
   daysAhead:      3,
 
   sports: ['nba', 'soccer', 'tennis_atp', 'tennis_wta', 'ufc'],
+  oddsApiKey: '5f63ecbdf6e559fb703755d164c9a7cf',
 };
 
 // ── ESPN Turnier-Cache ────────────────────────
@@ -81,6 +82,74 @@ async function fetchNbaEspnGames() {
     console.log('  NBA ESPN: ' + count + ' offene Spiele, ' + (nbaCompletedKeys.size/2|0) + ' abgeschlossen');
   } catch(e) {
     console.log('  NBA ESPN Fehler:', e.message);
+  }
+}
+
+// ── Tennis Odds Cache (The Odds API) ─────────────
+// { 'player1 vs player2': { pinnacleOdds, unibetOdds, commenceTime, bookmaker } }
+const tennisOddsCache = {};
+
+async function fetchTennisOdds() {
+  // Hole aktuelle Tennis Turniere von Odds API
+  try {
+    const sportsRes = await axios.get('https://api.the-odds-api.com/v4/sports/', {
+      params: { apiKey: CONFIG.oddsApiKey },
+      timeout: 8000,
+    });
+    const tennisSports = sportsRes.data.filter(s =>
+      s.key.includes('tennis') && s.active
+    ).map(s => s.key);
+
+    if (!tennisSports.length) { console.log('  Tennis Odds API: keine aktiven Turniere'); return; }
+
+    for (const sport of tennisSports) {
+      const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${sport}/odds/`, {
+        params: {
+          apiKey:      CONFIG.oddsApiKey,
+          regions:     'eu',
+          markets:     'h2h',
+          oddsFormat:  'decimal',
+          bookmakers:  'pinnacle,unibet,bet365',
+        },
+        timeout: 8000,
+      });
+
+      for (const match of r.data) {
+        const h = match.home_team;
+        const a = match.away_team;
+        const key1 = normalize(h) + '_vs_' + normalize(a);
+        const key2 = normalize(a) + '_vs_' + normalize(h);
+
+        let pinnacle = null, unibet = null;
+        for (const bm of (match.bookmakers || [])) {
+          const h2h = bm.markets.find(m => m.key === 'h2h');
+          if (!h2h) continue;
+          const homeOdds = h2h.outcomes.find(o => normalize(o.name) === normalize(h))?.price;
+          const awayOdds = h2h.outcomes.find(o => normalize(o.name) === normalize(a))?.price;
+          if (bm.key === 'pinnacle') pinnacle = { home: homeOdds, away: awayOdds };
+          if (bm.key === 'unibet' || bm.key === 'bet365') {
+            if (!unibet) unibet = { home: homeOdds, away: awayOdds, bookmaker: bm.key };
+          }
+        }
+
+        const info = {
+          homeTeam: h, awayTeam: a,
+          commenceTime: match.commence_time,
+          pinnacle, unibet,
+        };
+        tennisOddsCache[key1] = info;
+        tennisOddsCache[key2] = info;
+
+        // Auch Nachnamen-Keys
+        const lastH = h.split(' ').pop();
+        const lastA = a.split(' ').pop();
+        tennisOddsCache[normalize(lastH) + '_vs_' + normalize(lastA)] = info;
+        tennisOddsCache[normalize(lastA) + '_vs_' + normalize(lastH)] = info;
+      }
+    }
+    console.log('  Tennis Odds API: ' + Object.keys(tennisOddsCache).length/4 + ' Matches geladen');
+  } catch(e) {
+    console.log('  Tennis Odds API Fehler:', e.response?.status || e.message);
   }
 }
 
@@ -663,6 +732,7 @@ async function runScan(notify = true) {
   console.log(`=== Scan ${nowStr()} ===`);
   const allPreds = [];
   await fetchEspnTournaments();
+  await fetchTennisOdds();
   await fetchNbaEspnGames();
   await fetchUfcEspnFights();
   await fetchUfcBestOdds();
@@ -764,7 +834,9 @@ function formatBets(bets, title) {
       const eSign    = b.edge >= 0 ? '+' : '';
       const isTennis = b.sport === 'tennis_atp' || b.sport === 'tennis_wta';
       const star = isTennis
-        ? (b.confidenceStar >= 3 ? '\u2605\u2605\u2605 ' : b.confidenceStar >= 2 ? '\u2605\u2605 ' : '\u2605 ')
+        ? (b.hasRealOdds
+          ? (b.edge > 0.05 ? '\u2605 ' : b.edge > 0 ? '\u25cb ' : '\u26a0\ufe0f ')
+          : (b.confidenceStar >= 3 ? '\u2605\u2605\u2605 ' : b.confidenceStar >= 2 ? '\u2605\u2605 ' : '\u2605 '))
         : (b.edge > 0.05 ? '\u2605 ' : b.edge > 0 ? '\u25cb ' : '\u26a0\ufe0f ');
       const real = b.hasRealOdds ? '' : '~';
       const book = b.bestBookmaker ? ' [' + b.bestBookmaker + ']' : '';
@@ -781,10 +853,24 @@ function formatBets(bets, title) {
         out += rawP + conf + inj + '\n';
         out += 'Quote: ' + real + b.odds.toFixed(2) + ' | Edge: ' + eSign + (b.edge*100).toFixed(1) + '%\n\n';
       } else if (b.sport === 'tennis_atp' || b.sport === 'tennis_wta') {
-        const dataLabel = b.confidenceStar >= 2 ? '\u2705 Datenlage: vollst.' : '\u26a0\ufe0f Datenlage: lueckenhaft';
+        const real2  = b.hasRealOdds ? '' : '~';
+        const book2  = b.bestBookmaker ? ' [' + b.bestBookmaker + ']' : '';
+        const evVal  = b.hasRealOdds ? ((b.prob * b.odds - 1) * 100) : null;
+        const evStr  = evVal !== null ? ' | EV: ' + (evVal >= 0 ? '+' : '') + evVal.toFixed(1) + '%' : '';
+        // Status Label
+        let statusLabel;
+        if (b.hasRealOdds && b.edge > 0) {
+          statusLabel = '\u2705 AI schlaegt Buchmacher (+' + (b.edge*100).toFixed(1) + '%)';
+        } else if (b.hasRealOdds && b.edge <= 0) {
+          statusLabel = '\u26a0\ufe0f Buchmacher im Vorteil (' + (b.edge*100).toFixed(1) + '%)';
+        } else if (b.confidenceStar >= 2) {
+          statusLabel = '\u2705 Datenlage: vollstaendig';
+        } else {
+          statusLabel = '\u26a0\ufe0f Datenlage: lueckenhaft';
+        }
         out += '_' + b.dateLabel + '_\n';
-        out += 'Favorit: ' + (b.prob*100).toFixed(0) + '% Gewinnchance\n';
-        out += dataLabel + '\n\n';
+        out += 'Favorit: ' + (b.prob*100).toFixed(0) + '% | Quote: ' + real2 + b.odds.toFixed(2) + book2 + evStr + '\n';
+        out += statusLabel + '\n\n';
       } else {
         out += '_' + b.dateLabel + '_ | ' + b.league + ' | ' + real + b.odds.toFixed(2) + book + ' | ' + eSign + (b.edge*100).toFixed(1) + '%' + where + '\n\n';
       }
