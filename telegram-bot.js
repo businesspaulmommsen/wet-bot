@@ -759,20 +759,30 @@ function formatBets(bets, title) {
     const group    = byDate[date];
     const dayLabel = date === today ? 'Heute' : date === tomorrow ? 'Morgen' : date;
     const dd       = date.slice(8,10) + '.' + date.slice(5,7) + '.';
-    out += `\`--- ${dayLabel} ${dd} ---\`\n`;
+    out += '`--- ' + dayLabel + ' ' + dd + ' ---`' + '\n';
     for (const b of group) {
-      const e    = b.edge >= 0 ? `+${(b.edge*100).toFixed(1)}%` : `${(b.edge*100).toFixed(1)}%`;
-      const warn = b.sport === 'tennis_atp' || b.sport === 'tennis_wta'
-        ? (b.confidenceStar >= 3 ? '\u2605\u2605\u2605 ' : b.confidenceStar >= 2 ? '\u2605\u2605 ' : b.confidenceStar >= 1 ? '\u2605 ' : '\u25cb ')
-        : (b.edge < 0 ? '\u26a0\ufe0f ' : b.edge > 0.05 ? '\u2605 ' : '\u25cb ');
+      const eSign    = b.edge >= 0 ? '+' : '';
+      const isTennis = b.sport === 'tennis_atp' || b.sport === 'tennis_wta';
+      const star = isTennis
+        ? (b.confidenceStar >= 3 ? '\u2605\u2605\u2605 ' : b.confidenceStar >= 2 ? '\u2605\u2605 ' : '\u2605 ')
+        : (b.edge > 0.05 ? '\u2605 ' : b.edge > 0 ? '\u25cb ' : '\u26a0\ufe0f ');
       const real = b.hasRealOdds ? '' : '~';
-      const book = b.bestBookmaker ? ` [${b.bestBookmaker}]` : '';
-      const whereStr = b.sport === 'ufc'
-        ? (b.bestBookmaker
-          ? `\n\u{1F4CD} Wetten bei: *${b.bestBookmaker}*`
-          : `\n\u{1F4CD} Wetten bei: Unibet, Bet365 oder Betway`)
-        : '';
-      out += `${warn}*${b.pick}* vs ${b.opponent}\n_${b.dateLabel}_ | ${b.league} | ${real}${b.odds.toFixed(2)}${book} | ${e} | *\u20ac${b.bet.toFixed(2)}*${whereStr}\n\n`;
+      const book = b.bestBookmaker ? ' [' + b.bestBookmaker + ']' : '';
+      const where = b.sport === 'ufc'
+        ? '\n\u{1F4CD} ' + (b.bestBookmaker || 'Unibet / Bet365 / Betway') : '';
+
+      out += star + '*' + b.pick + '* vs ' + b.opponent + '\n';
+
+      if (b.sport === 'nba') {
+        const conf    = b.confidence ? ' | Conf: ' + (b.confidence*100).toFixed(0) + '%' : '';
+        const rawP    = b.rawProb ? 'Oddify: ' + (b.rawProb*100).toFixed(0) + '% \u2192 Bereinigt: ' + (b.prob*100).toFixed(0) + '%' : '';
+        const inj     = (b.pickInjuries > 0 || b.oppInjuries > 0) ? ' | \u{1FA79}' + (b.pickInjuries||0) + '/' + (b.oppInjuries||0) : '';
+        out += '_' + b.dateLabel + '_\n';
+        out += rawP + conf + inj + '\n';
+        out += 'Quote: ' + real + b.odds.toFixed(2) + ' | Edge: ' + eSign + (b.edge*100).toFixed(1) + '%\n\n';
+      } else {
+        out += '_' + b.dateLabel + '_ | ' + b.league + ' | ' + real + b.odds.toFixed(2) + book + ' | ' + eSign + (b.edge*100).toFixed(1) + '%' + where + '\n\n';
+      }
     }
   }
   return out.trim();
@@ -929,6 +939,7 @@ bot.on('message', async msg => {
       '/nba 50+ — nur Spiele mit positivem EV\n' +
       '/heute 50+ — alle Sportarten, nur pos. EV\n\n' +
       '*Wetten tracken:*\n' +
+      '/wette lakers 30 — einzelnes Spiel mit \u20ac30\n' +
       '/gesetzt nba 50 — NBA Wetten tracken\n' +
       '/gesetzt heute 30 — alle heutigen Wetten tracken\n' +
       '/stats — Statistik: Trefferquote, ROI, Gewinn\n\n' +
@@ -1051,6 +1062,39 @@ bot.on('message', async msg => {
 
     const allocated = buildBudgetAlloc(pool, budget);
     return send(formatBudgetMsg(sportArg, budget, allocated, ''), chatId);
+  }
+
+  // /wette teamname 30 — einzelnes Spiel
+  const wetteMatch = text.match(/^\/?(wette|bet)\s+(.+?)\s+(\d+(?:[.,]\d+)?)$/);
+  if (wetteMatch) {
+    const teamSearch = wetteMatch[2].toLowerCase();
+    const budget     = parseFloat(wetteMatch[3].replace(',', '.'));
+    const b = lastBets.find(b2 =>
+      b2.pick.toLowerCase().includes(teamSearch) ||
+      b2.opponent.toLowerCase().includes(teamSearch) ||
+      b2.game.toLowerCase().includes(teamSearch)
+    );
+    if (!b) return send('_Kein Spiel gefunden fuer "' + teamSearch + '"._', chatId);
+    const kelly   = halfKelly(b.prob, b.odds);
+    const betAmt  = +Math.min(kelly * budget, budget).toFixed(2);
+    const profit  = +(betAmt * (b.odds - 1)).toFixed(2);
+    const eSign   = b.edge >= 0 ? '+' : '';
+    const real    = b.hasRealOdds ? '' : '~';
+    const book    = b.bestBookmaker ? ' [' + b.bestBookmaker + ']' : '';
+    const conf    = b.confidence ? '\nConfidence: ' + (b.confidence*100).toFixed(0) + '%' : '';
+    const rawP    = b.rawProb ? '\nOddify: ' + (b.rawProb*100).toFixed(0) + '% \u2192 Bereinigt: ' + (b.prob*100).toFixed(0) + '%' : '';
+    const inj     = (b.pickInjuries > 0 || b.oppInjuries > 0) ? '\nVerletzungen: ' + (b.pickInjuries||0) + ' eigene / ' + (b.oppInjuries||0) + ' Gegner' : '';
+    const where   = b.sport === 'ufc' ? '\n\u{1F4CD} ' + (b.bestBookmaker || 'Unibet / Bet365 / Betway') : '';
+    if (b.edge <= 0) {
+      return send('\u26a0\ufe0f *' + b.pick + '* vs ' + b.opponent + '\n_' + b.dateLabel + '_\n\nKein Edge (' + eSign + (b.edge*100).toFixed(1) + '%)\n_Empfehlung: Nicht wetten._', chatId);
+    }
+    return send(
+      '*' + b.pick + '* vs ' + b.opponent + '\n_' + b.dateLabel + '_ | ' + b.league + '\n' +
+      rawP + conf + inj + '\n' +
+      'Quote: ' + real + b.odds.toFixed(2) + book + ' | Edge: ' + eSign + (b.edge*100).toFixed(1) + '%' + where + '\n\n' +
+      '*Empfohlener Einsatz: \u20ac' + betAmt + '*\n_(Half-Kelly | Gewinn: +\u20ac' + profit + ')_',
+      chatId
+    );
   }
 
   // /gesetzt nba 50
