@@ -774,12 +774,17 @@ function formatBets(bets, title) {
       out += star + '*' + b.pick + '* vs ' + b.opponent + '\n';
 
       if (b.sport === 'nba') {
-        const conf    = b.confidence ? ' | Conf: ' + (b.confidence*100).toFixed(0) + '%' : '';
-        const rawP    = b.rawProb ? 'Oddify: ' + (b.rawProb*100).toFixed(0) + '% \u2192 Bereinigt: ' + (b.prob*100).toFixed(0) + '%' : '';
-        const inj     = (b.pickInjuries > 0 || b.oppInjuries > 0) ? ' | \u{1FA79}' + (b.pickInjuries||0) + '/' + (b.oppInjuries||0) : '';
+        const conf = b.confidence ? ' | Conf: ' + (b.confidence*100).toFixed(0) + '%' : '';
+        const rawP = b.rawProb ? 'Oddify: ' + (b.rawProb*100).toFixed(0) + '% \u2192 Bereinigt: ' + (b.prob*100).toFixed(0) + '%' : '';
+        const inj  = (b.pickInjuries > 0 || b.oppInjuries > 0) ? ' | \u{1FA79}' + (b.pickInjuries||0) + '/' + (b.oppInjuries||0) : '';
         out += '_' + b.dateLabel + '_\n';
         out += rawP + conf + inj + '\n';
         out += 'Quote: ' + real + b.odds.toFixed(2) + ' | Edge: ' + eSign + (b.edge*100).toFixed(1) + '%\n\n';
+      } else if (b.sport === 'tennis_atp' || b.sport === 'tennis_wta') {
+        const dataLabel = b.confidenceStar >= 2 ? '\u2705 Datenlage: vollst.' : '\u26a0\ufe0f Datenlage: lueckenhaft';
+        out += '_' + b.dateLabel + '_\n';
+        out += 'Favorit: ' + (b.prob*100).toFixed(0) + '% Gewinnchance\n';
+        out += dataLabel + '\n\n';
       } else {
         out += '_' + b.dateLabel + '_ | ' + b.league + ' | ' + real + b.odds.toFixed(2) + book + ' | ' + eSign + (b.edge*100).toFixed(1) + '%' + where + '\n\n';
       }
